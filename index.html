@@ -76,6 +76,9 @@
       </div>
     </div>
 
+    <!-- DEBUG HID -->
+    <div class="bg-gray-950 border border-gray-800 rounded-lg p-2 text-[10px] font-mono text-gray-600 no-print" id="usb-debug">Esperando reporte HID...</div>
+
     <!-- CONTROLES DE TEST -->
     <div class="bg-gray-900/80 border border-gray-800 rounded-xl p-4 no-print">
       <div class="flex items-center justify-between mb-3">
@@ -282,29 +285,30 @@
       return 'unknown';
     }
 
-    function parsearBateria(bytes, tipo, reportId) {
+    function parsearBateria(dataView, tipo, reportId) {
+      var len = dataView.byteLength;
       switch (tipo) {
         case 'xbox': {
-          if (reportId === 0x04 && bytes.length > 3) {
-            return bytes[2];
+          if (reportId === 0x04 && len > 3) {
+            return dataView.getUint8(2);
           }
-          if (reportId === 0x01 && bytes.length > 14) {
-            var level = (bytes[13] >> 4) & 0x0F;
+          if (reportId === 0x01 && len > 14) {
+            var level = (dataView.getUint8(13) >> 4) & 0x0F;
             if (level > 0 && level <= 10) return Math.round((level / 10) * 100);
           }
           return null;
         }
         case 'ds4': {
-          if (bytes.length < 30) return null;
-          var bat = bytes[29];
+          if (len < 30) return null;
+          var bat = dataView.getUint8(29);
           var bat_data = bat & 0x0F;
           if (bat_data < 10) return bat_data * 10 + 5;
           if (bat_data === 10) return 100;
           return 0;
         }
         case 'ds5': {
-          if (bytes.length < 53) return null;
-          var bat5 = bytes[52];
+          if (len < 53) return null;
+          var bat5 = dataView.getUint8(52);
           var charge = bat5 & 0x0F;
           var status = bat5 >> 4;
           if (status === 0 || status === 1) return Math.min(charge * 10 + 5, 100);
@@ -386,11 +390,21 @@
         statusText.className = 'text-xs text-emerald-400';
 
         var batteryRead = false;
+        var lastReportLen = 0;
+        var lastReportId = -1;
+        var lastReportBytes = '';
 
         hidDevice.oninputreport = function(e) {
+          lastReportLen = e.data.byteLength;
+          lastReportId = e.reportId;
+          var tmp = [];
+          for (var i = 0; i < Math.min(e.data.byteLength, 32); i++) tmp.push(e.data.getUint8(i).toString(16).padStart(2, '0'));
+          lastReportBytes = tmp.join(' ');
+          document.getElementById('usb-debug').innerHTML =
+            'ReportID=0x' + lastReportId.toString(16) + ' Len=' + lastReportLen + ' [' + lastReportBytes + ']';
+
           if (batteryRead) return;
-          var bytes = new Uint8Array(e.data.buffer);
-          var pct = parsearBateria(bytes, tipo, e.reportId);
+          var pct = parsearBateria(e.data, tipo, e.reportId);
           if (pct !== null && pct >= 0 && pct <= 100) {
             batteryRead = true;
             var voltage = 3.0 + (pct / 100) * 1.2;
@@ -408,8 +422,8 @@
         setTimeout(function() {
           if (!batteryRead) {
             batteryInfo.classList.remove('hidden');
-            document.getElementById('usb-voltage-val').innerText = 'N/A';
-            document.getElementById('usb-battery-pct').innerText = 'Conectado — introduce % manualmente';
+            document.getElementById('usb-voltage-val').innerText = '0%';
+            document.getElementById('usb-battery-pct').innerText = 'No se pudo leer batería del reporte HID (ID=' + lastReportId + ' len=' + lastReportLen + ')';
             badge.classList.remove('hidden');
             badge.innerText = 'USB OK (manual)';
           }
