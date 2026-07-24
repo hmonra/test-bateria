@@ -230,10 +230,21 @@
 
   <script>
     /* ======================================================
-       CONFIGURACIÓN HID — Xbox Controllers
+       CONFIGURACIÓN HID — Xbox + PlayStation
        ====================================================== */
-    var XBOX_VID = 0x045E;
-    var XBOX_PIDS = [0x028E, 0x028F, 0x02D1, 0x02DD, 0x02EA, 0x02E0, 0x0B05, 0x0B13, 0x0B12, 0x0B20];
+    var SUPPORTED_DEVICES = [
+      // Xbox (Microsoft)
+      { vendorId: 0x045E, productId: 0x028E }, { vendorId: 0x045E, productId: 0x028F },
+      { vendorId: 0x045E, productId: 0x02D1 }, { vendorId: 0x045E, productId: 0x02DD },
+      { vendorId: 0x045E, productId: 0x02EA }, { vendorId: 0x045E, productId: 0x02E0 },
+      { vendorId: 0x045E, productId: 0x0B05 }, { vendorId: 0x045E, productId: 0x0B12 },
+      { vendorId: 0x045E, productId: 0x0B13 }, { vendorId: 0x045E, productId: 0x0B20 },
+      // PlayStation (Sony)
+      { vendorId: 0x054C, productId: 0x05C4 }, // DS4 v1
+      { vendorId: 0x054C, productId: 0x09CC }, // DS4 v2
+      { vendorId: 0x054C, productId: 0x0CE6 }, // DS5
+      { vendorId: 0x054C, productId: 0x0DF2 }, // DS5 Edge
+    ];
 
     var satId = '';
     var modelo = '';
@@ -259,9 +270,53 @@
     });
 
     /* ======================================================
-       WEBHID + LECTURA DE BATERÍA (como dualshock-tools)
+       WEBHID + LECTURA DE BATERÍA (Xbox + PS4 + PS5)
        ====================================================== */
     var hidDevice = null;
+
+    function detectarTipoMando(device) {
+      if (device.vendorId === 0x045E) return 'xbox';
+      if (device.vendorId === 0x054C) {
+        if (device.productId === 0x05C4 || device.productId === 0x09CC) return 'ds4';
+        if (device.productId === 0x0CE6 || device.productId === 0x0DF2) return 'ds5';
+        return 'sony';
+      }
+      return 'unknown';
+    }
+
+    function parsearBateria(bytes, tipo, reportId) {
+      switch (tipo) {
+        case 'xbox': {
+          if (reportId === 0x04 && bytes.length > 3) {
+            return bytes[2];
+          }
+          if (reportId === 0x01 && bytes.length > 14) {
+            var level = (bytes[13] >> 4) & 0x0F;
+            if (level > 0 && level <= 10) return Math.round((level / 10) * 100);
+          }
+          return null;
+        }
+        case 'ds4': {
+          if (bytes.length < 30) return null;
+          var bat = bytes[29];
+          var bat_data = bat & 0x0F;
+          if (bat_data < 10) return bat_data * 10 + 5;
+          if (bat_data === 10) return 100;
+          return 0;
+        }
+        case 'ds5': {
+          if (bytes.length < 53) return null;
+          var bat5 = bytes[52];
+          var charge = bat5 & 0x0F;
+          var status = bat5 >> 4;
+          if (status === 0 || status === 1) return Math.min(charge * 10 + 5, 100);
+          if (status === 2) return 100;
+          return 0;
+        }
+        default:
+          return null;
+      }
+    }
 
     async function conectarUsb() {
       var container = document.getElementById('usb-devices-list');
@@ -283,17 +338,15 @@
       try {
         devices = await navigator.hid.getDevices();
         devices = devices.filter(function(d) {
-          return d.vendorId === XBOX_VID && XBOX_PIDS.indexOf(d.productId) !== -1;
+          return SUPPORTED_DEVICES.some(function(s) {
+            return s.vendorId === d.vendorId && s.productId === d.productId;
+          });
         });
       } catch (e) {}
 
       if (devices.length === 0) {
         try {
-          devices = await navigator.hid.requestDevice({
-            filters: XBOX_PIDS.map(function(pid) {
-              return { vendorId: XBOX_VID, productId: pid };
-            })
-          });
+          devices = await navigator.hid.requestDevice({ filters: SUPPORTED_DEVICES });
         } catch (e) {
           container.innerHTML = '<span class="text-gray-400"><i class="fas fa-info-circle mr-1"></i>No se seleccionó ningún dispositivo.</span>';
           statusText.innerText = 'Cancelado';
@@ -303,18 +356,19 @@
       }
 
       if (devices.length === 0) {
-        container.innerHTML = '<span class="text-gray-400"><i class="fas fa-info-circle mr-1"></i>No se encontraron mandos Xbox (VID ' + XBOX_VID.toString(16).toUpperCase() + ').</span>';
+        container.innerHTML = '<span class="text-gray-400"><i class="fas fa-info-circle mr-1"></i>No se encontraron mandos compatibles (Xbox o PlayStation).</span>';
         statusText.innerText = 'Sin dispositivos';
         statusText.className = 'text-xs text-gray-500';
         return;
       }
 
       hidDevice = devices[0];
+      var tipo = detectarTipoMando(hidDevice);
       container.innerHTML = '';
-      var devInfo = hidDevice.productName || ('Xbox 0x' + hidDevice.productId.toString(16).toUpperCase());
+      var devInfo = hidDevice.productName || ('Mando 0x' + hidDevice.productId.toString(16).toUpperCase());
       var div = document.createElement('div');
       div.className = 'flex items-center gap-2 text-gray-300';
-      div.innerHTML = '<span class="usb-status non" id="usb-dot"></span><span class="truncate">' + escHtml(devInfo) + '</span><span class="text-gray-600 ml-auto">0x' + hidDevice.productId.toString(16).toUpperCase() + '</span>';
+      div.innerHTML = '<span class="usb-status non" id="usb-dot"></span><span class="truncate">' + escHtml(devInfo) + '</span><span class="text-gray-600 ml-auto">' + tipo.toUpperCase() + '</span>';
       container.appendChild(div);
 
       try {
@@ -331,44 +385,21 @@
         hidDevice.oninputreport = function(e) {
           if (batteryRead) return;
           var bytes = new Uint8Array(e.data.buffer);
-          if (bytes.length < 2) return;
-
-          var batteryPct = null;
-          var reportId = e.reportId;
-
-          // Xbox One/Series: input report ID 0x01, battery at byte 13
-          // upper nibble = level (0-10), lower nibble = type (0=wired,1=disconnected,2=AA,3=Li-ion)
-          if (reportId === 0x01 && bytes.length > 14) {
-            var battByte = bytes[13];
-            var level = (battByte >> 4) & 0x0F; // upper nibble: 0=empty ... 10=full
-            var type = battByte & 0x0F;           // lower nibble: battery type
-            if (level > 0 && level <= 10) {
-              batteryPct = Math.round((level / 10) * 100);
-            }
-          }
-
-          // Xbox Series X: report ID 0x04 is battery-specific
-          // byte 2 = level in %
-          if (reportId === 0x04 && bytes.length > 3) {
-            batteryPct = bytes[2];
-          }
-
-          if (batteryPct !== null && batteryPct > 0 && batteryPct <= 100) {
+          var pct = parsearBateria(bytes, tipo, e.reportId);
+          if (pct !== null && pct >= 0 && pct <= 100) {
             batteryRead = true;
-            var voltage = 3.0 + (batteryPct / 100) * 1.2;
-
+            var voltage = 3.0 + (pct / 100) * 1.2;
             usbVoltajeLeido = voltage;
             batteryInfo.classList.remove('hidden');
-            document.getElementById('usb-voltage-val').innerText = batteryPct + '%';
+            document.getElementById('usb-voltage-val').innerText = pct + '%';
             document.getElementById('usb-battery-pct').innerText = 'Voltaje estimado: ' + voltage.toFixed(2) + 'V';
             badge.classList.remove('hidden');
-            document.getElementById('bateria-inicio').value = batteryPct;
+            document.getElementById('bateria-inicio').value = pct;
             document.getElementById('unidad-inicio').innerText = '%';
             calcularResultados();
           }
         };
 
-        // Timeout: si en 3 segs no se leyó batería, mostrar como manual
         setTimeout(function() {
           if (!batteryRead) {
             batteryInfo.classList.remove('hidden');
