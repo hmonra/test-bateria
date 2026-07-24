@@ -1,16 +1,734 @@
 <!DOCTYPE html>
-<html lang="es">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Test de Batería</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎮 </text></svg>">
-    <style>
-        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background-color: #030712; }
-        iframe { border: none; width: 100%; height: 100%; }
-    </style>
+  <base target="_top">
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    .animate-fade-in { animation: fadeInModal 0.25s ease-out; }
+    @keyframes fadeInModal { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    body { background-color: #030303; }
+    .timer-display { font-variant-numeric: tabular-nums; }
+    .battery-bar { height: 24px; border-radius: 6px; transition: width 0.3s ease, background-color 0.3s ease; }
+    .pulse-dot { animation: pulse 1s ease-in-out infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .result-ok { background-color: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.4); }
+    .result-warn { background-color: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.4); }
+    .result-bad { background-color: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.4); }
+    .stat-card { transition: transform 0.15s ease; }
+    .stat-card:hover { transform: translateY(-1px); }
+    .usb-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+    .usb-status.ok { background-color: #10b981; box-shadow: 0 0 6px #10b981; }
+    .usb-status.err { background-color: #ef4444; box-shadow: 0 0 6px #ef4444; }
+    .usb-status.non { background-color: #6b7280; }
+    @media print {
+      body { background-color: white !important; color: black !important; }
+      .no-print { display: none !important; }
+      .print-section { border: 1px solid #ccc !important; padding: 12px !important; margin: 8px 0 !important; }
+      .stat-card { border: 1px solid #ddd !important; }
+    }
+  </style>
 </head>
-<body>
-    <iframe src="https://script.google.com/macros/s/AKfycbwb2EXLHYQ0CVU2YHIjfvuszvnmTkIV1l-x5dx6BNH0i9LC4LxVeFvDlczqkNOMUUyL/exec"></iframe>
+<body class="text-gray-100 min-h-screen flex flex-col">
+
+  <!-- HEADER -->
+  <header class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 p-4 border-b border-gray-800 bg-gray-900/60 shrink-0">
+    <div>
+      <h1 class="text-lg font-bold text-white flex items-center gap-2">
+        <i class="fas fa-battery-three-quarters text-emerald-400"></i> Test de Batería
+      </h1>
+      <p class="text-xs text-gray-500 mt-0.5" id="header-info">SAT —</p>
+    </div>
+    <div class="flex gap-2">
+      <button onclick="window.close()" class="bg-gray-800 hover:bg-gray-700 text-gray-300 font-semibold px-4 py-2 rounded-lg text-sm border border-gray-700 transition-all flex items-center gap-2 cursor-pointer no-print">
+        <i class="fas fa-times text-xs"></i> Cerrar
+      </button>
+      <button onclick="imprimirTest()" class="bg-gray-800 hover:bg-gray-700 text-gray-300 font-semibold px-4 py-2 rounded-lg text-sm border border-gray-700 transition-all flex items-center gap-2 cursor-pointer no-print">
+        <i class="fas fa-print text-xs"></i> Imprimir
+      </button>
+      <button onclick="guardarTest()" id="btn-guardar" class="bg-emerald-700 hover:bg-emerald-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition-all flex items-center gap-2 cursor-pointer no-print">
+        <i class="fas fa-save text-xs"></i> Guardar en BD
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN -->
+  <main class="flex-1 p-4 max-w-4xl mx-auto w-full space-y-4 overflow-y-auto">
+
+    <!-- WEBUS CONNECTION -->
+    <div class="bg-gray-900/80 border border-gray-800 rounded-xl p-4 no-print">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-bold text-gray-300 flex items-center gap-2">
+          <i class="fas fa-plug text-blue-400"></i> Conexión USB
+        </h3>
+        <span id="usb-status-text" class="text-xs text-gray-500">No conectado</span>
+      </div>
+      <div class="flex items-center gap-3 flex-wrap">
+        <button onclick="conectarUsb()" id="btn-usb-connect" class="bg-blue-700 hover:bg-blue-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition-all cursor-pointer">
+          <i class="fas fa-search mr-1"></i> Conectar Mandos USB
+        </button>
+        <div id="usb-devices-list" class="flex flex-col gap-1 text-xs flex-1 min-w-0"></div>
+        <div id="usb-battery-info" class="hidden bg-gray-950 border border-gray-800 rounded-lg p-3 text-xs flex-shrink-0" style="min-width:180px">
+          <div class="text-gray-400 uppercase text-[10px] mb-1 font-semibold">Voltaje Leído</div>
+          <div class="text-xl font-mono font-bold text-emerald-400" id="usb-voltage-val">—</div>
+          <div class="text-gray-500 mt-1" id="usb-battery-pct">Batería estimada: —</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONTROLES DE TEST -->
+    <div class="bg-gray-900/80 border border-gray-800 rounded-xl p-4 no-print">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-bold text-gray-300 flex items-center gap-2">
+          <i class="fas fa-stopwatch text-blue-400"></i> Cronómetro del Test
+        </h3>
+        <span id="timer-status" class="text-xs text-gray-500">Pausado</span>
+      </div>
+      <div class="flex items-center gap-4">
+        <div class="text-4xl font-mono font-bold text-emerald-400 timer-display" id="timer-display">00:00:00</div>
+        <div class="flex gap-2">
+          <button onclick="iniciarTimer()" id="btn-timer-start" class="bg-emerald-700 hover:bg-emerald-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition-all cursor-pointer">
+            <i class="fas fa-play mr-1"></i> Iniciar
+          </button>
+          <button onclick="pausarTimer()" id="btn-timer-pause" class="bg-yellow-700 hover:bg-yellow-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition-all cursor-pointer hidden">
+            <i class="fas fa-pause mr-1"></i> Pausar
+          </button>
+          <button onclick="resetTimer()" id="btn-timer-reset" class="bg-gray-700 hover:bg-gray-600 text-gray-300 font-semibold px-4 py-2 rounded-lg text-sm transition-all cursor-pointer">
+            <i class="fas fa-undo mr-1"></i> Reset
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIBRACIÓN AUTOMÁTICA -->
+    <div class="bg-gray-900/80 border border-gray-800 rounded-xl p-4 no-print">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-bold text-gray-300 flex items-center gap-2">
+          <i class="fas fa-hand-pointer text-purple-400"></i> Vibración Automática
+        </h3>
+        <span id="vib-status" class="text-xs text-gray-500">Inactivo</span>
+      </div>
+      <div class="flex items-center gap-4 flex-wrap">
+        <button onclick="iniciarVibracion()" id="btn-vib-start" class="bg-purple-700 hover:bg-purple-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition-all cursor-pointer">
+          <i class="fas fa-play mr-1"></i> Iniciar Vibración
+        </button>
+        <button onclick="pararVibracion()" id="btn-vib-stop" class="bg-red-700 hover:bg-red-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition-all cursor-pointer hidden">
+          <i class="fas fa-stop mr-1"></i> Parar Vibración
+        </button>
+        <div class="flex items-center gap-2 text-xs text-gray-400">
+          <span>Intervalo:</span>
+          <input type="number" id="vib-interval" min="1" max="10" value="3" step="1"
+                 class="w-16 bg-gray-950 border border-gray-800 rounded-lg px-2 py-1 text-center text-sm font-mono text-gray-200 focus:outline-none focus:border-purple-500">
+          <span>s vibración / descanso</span>
+        </div>
+      </div>
+      <div class="mt-2 text-xs text-gray-600" id="vib-info">
+        Simula uso continuo con vibración periódica (como jugar a Forza Horizon 5). El mando se vibrará vigorosamente durante el test.
+      </div>
+    </div>
+
+    <!-- BATERÍA MANUAL (ENTRADA) -->
+    <div class="bg-gray-900/80 border border-gray-800 rounded-xl p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-bold text-gray-300 flex items-center gap-2">
+          <i class="fas fa-charging-station text-amber-400"></i> Niveles de Batería
+          <span id="usb-badge" class="hidden text-[10px] bg-emerald-900 text-emerald-400 px-1.5 py-0.5 rounded">Auto</span>
+        </h3>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="stat-card">
+          <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+            Batería al Iniciar (%)<span class="text-gray-600 ml-1">o V</span>
+          </label>
+          <div class="flex items-center gap-3">
+            <input type="number" id="bateria-inicio" min="0" max="100" value="100" step="1" placeholder="100"
+                   class="w-20 bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-center text-lg font-mono text-blue-400 focus:outline-none focus:border-blue-500"
+                   oninput="calcularResultados()">
+            <span id="unidad-inicio" class="text-xs text-gray-500">%</span>
+          </div>
+        </div>
+        <div class="stat-card">
+          <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+            Batería al Finalizar (%)<span class="text-gray-600 ml-1">o V</span>
+          </label>
+          <div class="flex items-center gap-3">
+            <input type="number" id="bateria-fin" min="0" max="100" value="80" step="1" placeholder="80"
+                   class="w-20 bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-center text-lg font-mono text-red-400 focus:outline-none focus:border-red-500"
+                   oninput="calcularResultados()">
+            <span id="unidad-fin" class="text-xs text-gray-500">%</span>
+          </div>
+        </div>
+      </div>
+      <div class="mt-3 text-xs text-gray-600">
+        <i class="fas fa-info-circle text-gray-500 mr-1"></i>
+        Si conectaste el mando vía USB, el voltaje se lee automáticamente (valor en V). Si no, introduce el porcentaje manualmente. También puedes introducir el voltaje directamente en estos campos si prefieres medirlo con un multímetro.
+      </div>
+    </div>
+
+    <!-- RESULTADOS -->
+    <div class="bg-gray-900/80 border border-gray-800 rounded-xl p-4" id="resultados-panel">
+      <h3 class="text-sm font-bold text-gray-300 flex items-center gap-2 mb-3">
+        <i class="fas fa-chart-bar text-purple-400"></i> Resultados del Test
+      </h3>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div class="bg-gray-950 border border-gray-800 rounded-lg p-3 text-center">
+          <span class="text-[10px] text-gray-500 uppercase block">Duración</span>
+          <span class="text-lg font-bold text-white timer-display" id="res-duracion">0 min</span>
+        </div>
+        <div class="bg-gray-950 border border-gray-800 rounded-lg p-3 text-center">
+          <span class="text-[10px] text-gray-500 uppercase block">% Consumido</span>
+          <span class="text-lg font-bold text-amber-400" id="res-consumo">0%</span>
+        </div>
+        <div class="bg-gray-950 border border-gray-800 rounded-lg p-3 text-center">
+          <span class="text-[10px] text-gray-500 uppercase block">Min por 1%</span>
+          <span class="text-lg font-bold text-cyan-400 timer-display" id="res-min-uno">0.0</span>
+        </div>
+        <div class="bg-gray-950 border border-gray-800 rounded-lg p-3 text-center">
+          <span class="text-[10px] text-gray-500 uppercase block">Autonomía Est.</span>
+          <span class="text-lg font-bold text-emerald-400" id="res-autonomia">0 h</span>
+        </div>
+      </div>
+      <div class="mt-3 p-3 rounded-lg border text-center text-sm font-semibold" id="res-estado">
+        —
+      </div>
+    </div>
+
+    <!-- UMBRAL DE MÍNIMO -->
+    <div class="bg-gray-900/80 border border-gray-800 rounded-xl p-4 no-print">
+      <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+        <i class="fas fa-sliders-h text-yellow-400 mr-1"></i> Umbral Mínimo de Autonomía (horas)
+      </label>
+      <input type="number" id="umbral-minimo" min="0.5" max="24" step="0.5" value="4"
+             class="w-32 bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-sm font-mono text-yellow-400 focus:outline-none focus:border-yellow-500"
+             oninput="calcularResultados()">
+      <span class="text-xs text-gray-500 ml-2">Por debajo de este valor se marca como <span class="text-red-400 font-bold">⚠️ Alerta</span></span>
+    </div>
+
+    <!-- NOTAS -->
+    <div class="bg-gray-900/80 border border-gray-800 rounded-xl p-4 no-print">
+      <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+        <i class="fas fa-pencil-alt text-gray-400 mr-1"></i> Notas Adicionales
+      </label>
+      <textarea id="notas" rows="2" placeholder="Ej: Test realizado con Forza Horizon 5, vibración al 100%, 60Hz..."
+                class="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-gray-500 resize-none"></textarea>
+    </div>
+
+    <!-- HISTÓRICO -->
+    <div class="bg-gray-900/80 border border-gray-800 rounded-xl p-4">
+      <h3 class="text-sm font-bold text-gray-300 flex items-center gap-2 mb-3">
+        <i class="fas fa-history text-cyan-400"></i> Historial de Tests
+      </h3>
+      <div id="lista-historico" class="text-sm text-gray-500 italic">Cargando...</div>
+    </div>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="p-3 border-t border-gray-800 bg-gray-900/40 text-center text-xs text-gray-600 shrink-0 no-print">
+    FIX-PAD Battery Test &middot; WebUSB &middot; Guarda resultados en el navegador (localStorage)
+  </footer>
+
+  <script>
+    /* ======================================================
+       CONFIGURACIÓN WEBUS USB — Xbox Controllers
+       ====================================================== */
+    var XBOX_VID = 0x045E;
+    // Xbox One S/X (varios PIDs)
+    var XBOX_PIDS = [0x028E, 0x028F, 0x02D1, 0x02DD, 0x02EA, 0x02E0, 0x0B05, 0x0B13];
+
+    var satId = '';
+    var modelo = '';
+    var intervaloTimer = null;
+    var segundos = 0;
+    var timerCorriendo = false;
+    var vibIntervalo = null;
+    var vibCorriendo = false;
+    var usbVoltajeLeido = null;
+    var usbConectado = false;
+    var umbralVoltajeMax = 4.2;
+    var umbralVoltajeMin = 3.0;
+
+    /* ======================================================
+       INICIO
+       ====================================================== */
+    window.addEventListener('load', function() {
+      var params = new URLSearchParams(window.location.search);
+      satId = params.get('s') || '';
+      modelo = params.get('m') || '';
+      document.getElementById('header-info').innerText = 'SAT ' + satId + (modelo ? ' — ' + modelo : '');
+      cargarHistorico();
+    });
+
+    /* ======================================================
+       WEUSB + LECTURA DE VOLTAJE (GIP-style)
+       ====================================================== */
+    async function conectarUsb() {
+      var container = document.getElementById('usb-devices-list');
+      var statusText = document.getElementById('usb-status-text');
+      var batteryInfo = document.getElementById('usb-battery-info');
+      var badge = document.getElementById('usb-badge');
+
+      // Verificar soporte
+      if (!navigator.usb) {
+        container.innerHTML = '<span class="text-red-400"><i class="fas fa-exclamation-triangle mr-1"></i>WebUSB no soportado. Usa Chrome.</span>';
+        statusText.innerText = 'No soportado';
+        return;
+      }
+
+      statusText.innerText = 'Buscando...';
+      statusText.className = 'text-xs text-yellow-400';
+
+      var xboxDevices = [];
+
+      try {
+        var devices = await navigator.usb.getDevices();
+        xboxDevices = devices.filter(function(d) {
+          return d.vendorId === XBOX_VID && XBOX_PIDS.indexOf(d.productId) !== -1;
+        });
+      } catch (e) {
+        xboxDevices = [];
+      }
+
+      if (xboxDevices.length === 0) {
+        try {
+          var device = await navigator.usb.requestDevice({
+            filters: XBOX_PIDS.map(function(pid) {
+              return { vendorId: XBOX_VID, productId: pid };
+            })
+          });
+          xboxDevices = [device];
+        } catch (e) {
+          container.innerHTML = '<span class="text-gray-400"><i class="fas fa-info-circle mr-1"></i>No se seleccionó ningún dispositivo.</span>';
+          statusText.innerText = 'Cancelado';
+          statusText.className = 'text-xs text-gray-500';
+          return;
+        }
+      }
+
+      if (xboxDevices.length === 0) {
+        container.innerHTML = '<span class="text-gray-400"><i class="fas fa-info-circle mr-1"></i>No se encontraron mandos Xbox USB conectados (VID ' + XBOX_VID.toString(16).toUpperCase() + ').</span>';
+        statusText.innerText = 'Sin dispositivos';
+        statusText.className = 'text-xs text-gray-500';
+        return;
+      }
+
+        container.innerHTML = '';
+        var allSuccess = true;
+
+        for (var i = 0; i < xboxDevices.length; i++) {
+          (function(device) {
+            var devInfo = device.productName || ('Xbox 0x' + device.productId.toString(16).toUpperCase());
+            var div = document.createElement('div');
+            div.className = 'flex items-center gap-2 text-gray-300';
+            div.innerHTML = '<span class="usb-status non" id="usb-dot-' + device.deviceId + '"></span><span class="truncate">' + escHtml(devInfo) + '</span><span class="text-gray-600 ml-auto">0x' + device.productId.toString(16).toUpperCase() + '</span>';
+            container.appendChild(div);
+
+            // Intentar abrir y leer
+            leerVoltajeWebUSB(device, div);
+          })(xboxDevices[i]);
+        }
+    }
+
+    async function leerVoltajeWebUSB(device, divEl) {
+      var dot = document.getElementById('usb-dot-' + device.deviceId);
+      var statusText = document.getElementById('usb-status-text');
+      var batteryInfo = document.getElementById('usb-battery-info');
+      var badge = document.getElementById('usb-badge');
+
+      try {
+        if (device.opened === false || device.opened === undefined) {
+          await device.open();
+        }
+        if (!device.configuration) {
+          await device.selectConfiguration(1);
+        }
+        await device.claimInterface(0);
+
+        usbConectado = true;
+        usbDevices = true;
+        if (dot) { dot.className = 'usb-status ok'; }
+        statusText.innerText = 'Conectado — leyendo voltaje...';
+        statusText.className = 'text-xs text-emerald-400';
+
+        // Leer voltaje vía GIP protocol (Xbox interrupt endpoint)
+        // El endpoint de entrada GIP para Xbox es 0x81 (IN interrupt)
+        // GIP State Packet: Report ID 0x20 con datos de batería
+        // Para Xbox One, la batería está en bytes específicos del packet
+        // Intentamos leer del endpoint de interrupción (1 = IN interrupt, ep 0x81)
+
+        var voltage = null;
+        var batteryPct = null;
+
+        // Método 1: Leer características del dispositivo (WebUSB getDeviceInfo)
+        try {
+          // Algunos dispositivos USB exponen la batería en configuración
+          // Xbox usa HID + GIP por encima, así que intentamos lectura directa
+          var result = await device.transferIn(1, 64); // endpoint 1 IN, máx 64 bytes
+          if (result && result.data) {
+            var bytes = new Uint8Array(result.data.buffer);
+            // Intentar parsear GIP state packet
+            // Esto es un intento basado en protocolo conocido
+            // Byte 4 o 5 en muchos mandos Xbox contiene % batería
+            // Voltaje real se deriva de: voltaje = 3.0 + (%/100) * 1.2 (aprox para Li-ion single cell)
+            // Para información exacta necesitaríamos reverse-engineering más profundo
+            batteryPct = bytes[4] || null;
+            if (batteryPct !== null && batteryPct <= 100) {
+              // Derivar voltaje aproximado
+              voltage = 3.0 + (batteryPct / 100) * 1.2;
+            }
+            // Si bytes[0] == 0x20, es GIP state report
+            if (bytes[0] === 0x20 && bytes.length >= 6) {
+              batteryPct = bytes[2];
+              voltage = (bytes[3] / 100.0) || voltage;
+            }
+          }
+        } catch (e) {
+          // transferIn falló, el endpoint podría ser diferente
+          console.warn('GIP transferIn falló (esperado en algunos modelos):', e.message);
+        }
+
+        // Si logramos leer voltaje
+        if (voltage !== null && voltage > 2) {
+          usbVoltajeLeido = voltage;
+          batteryInfo.classList.remove('hidden');
+          document.getElementById('usb-voltage-val').innerText = voltage.toFixed(2) + ' V';
+          var pct = Math.round(((voltage - umbralVoltajeMin) / (umbralVoltajeMax - umbralVoltajeMin)) * 100);
+          pct = Math.max(0, Math.min(100, pct));
+          document.getElementById('usb-battery-pct').innerText = 'Batería estimada: ' + pct + '%';
+          badge.classList.remove('hidden');
+          document.getElementById('bateria-inicio').value = pct;
+          document.getElementById('unidad-inicio').innerText = '%';
+          calcularResultados();
+        } else {
+          // Fallback: el mando está conectado pero no pudimos leer voltaje por protocolo
+          if (dot) { dot.className = 'usb-status ok'; }
+          batteryInfo.classList.remove('hidden');
+          document.getElementById('usb-voltage-val').innerText = 'N/A';
+          document.getElementById('usb-battery-pct').innerText = 'Conectado — introducir manualmente';
+          badge.classList.remove('hidden');
+          badge.innerText = 'USB OK (manual)';
+        }
+
+      } catch (err) {
+        if (dot) { dot.className = 'usb-status err'; }
+        console.warn('Error WebUSB:', err.message);
+        statusText.innerText = 'Error de conexión (' + err.message + ')';
+        statusText.className = 'text-xs text-red-400';
+      }
+    }
+
+    /* ======================================================
+       VIBRACIÓN AUTOMÁTICA (VibrationActuator)
+       ====================================================== */
+    async function iniciarVibracion() {
+      if (vibCorriendo) return;
+
+      // Verificar soporte de vibración en gamepads conectados
+      var gamepads = navigator.getGamepads();
+      var vibGamepad = null;
+      for (var i = 0; i < gamepads.length; i++) {
+        var gp = gamepads[i];
+        if (gp && gp.vibrationActuator) {
+          vibGamepad = gp;
+          break;
+        }
+      }
+
+      if (!vibGamepad) {
+        alert('No se detectó ningún mando con vibración conectado al navegador.\nConecta el mando por USB antes de iniciar el test.');
+        return;
+      }
+
+      vibCorriendo = true;
+      var intervalo = parseInt(document.getElementById('vib-interval').value) || 3;
+      var btnStart = document.getElementById('btn-vib-start');
+      var btnStop = document.getElementById('btn-vib-stop');
+      var statusEl = document.getElementById('vib-status');
+
+      btnStart.classList.add('hidden');
+      btnStop.classList.remove('hidden');
+      statusEl.innerText = 'Vibrando';
+      statusEl.className = 'text-xs text-purple-400 pulse-dot';
+
+      function vibTick() {
+        if (!vibCorriendo) return;
+        // Encender vibración fuerte
+        vibGamepad.vibrationActuator.playEffect('dual-rumble', {
+          strongMagnitude: 1.0,
+          weakMagnitude: 1.0,
+          duration: 500
+        }).catch(function() {});
+
+        // Programar pausa
+        setTimeout(function() {
+          if (!vibCorriendo) return;
+          // Apagar (duración muy corta = efecto de parada)
+          vibGamepad.vibrationActuator.playEffect('dual-rumble', {
+            strongMagnitude: 0.0,
+            weakMagnitude: 0.0,
+            duration: 50
+          }).catch(function() {});
+
+          // Siguiente ciclo
+          setTimeout(vibTick, (intervalo * 1000) - 50);
+        }, 500);
+      }
+
+      vibTick();
+
+      // También sincronizar vibración con el timer: si el timer se pausa, paramos vibración
+      // (el usuario puede pausar el test y continuar después)
+    }
+
+    function pararVibracion() {
+      vibCorriendo = false;
+      if (vibIntervalo) { clearTimeout(vibIntervalo); vibIntervalo = null; }
+
+      // Intentar parar vibración del mando
+      try {
+        var gamepads = navigator.getGamepads();
+        for (var i = 0; i < gamepads.length; i++) {
+          var gp = gamepads[i];
+          if (gp && gp.vibrationActuator) {
+            gp.vibrationActuator.playEffect('dual-rumble', {
+              strongMagnitude: 0.0,
+              weakMagnitude: 0.0,
+              duration: 50
+            }).catch(function() {});
+          }
+        }
+      } catch (e) {}
+
+      var btnStart = document.getElementById('btn-vib-start');
+      var btnStop = document.getElementById('btn-vib-stop');
+      var statusEl = document.getElementById('vib-status');
+      btnStart.classList.remove('hidden');
+      btnStop.classList.add('hidden');
+      statusEl.innerText = 'Detenido';
+      statusEl.className = 'text-xs text-gray-500';
+      calcularResultados();
+    }
+
+    /* ======================================================
+       TIMER
+       ====================================================== */
+    function formatearTiempo(totalSeg) {
+      var h = Math.floor(totalSeg / 3600);
+      var m = Math.floor((totalSeg % 3600) / 60);
+      var s = totalSeg % 60;
+      return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+    }
+
+    function iniciarTimer() {
+      if (timerCorriendo) return;
+      timerCorriendo = true;
+      intervaloTimer = setInterval(function() {
+        segundos++;
+        document.getElementById('timer-display').innerText = formatearTiempo(segundos);
+        calcularResultados();
+      }, 1000);
+      document.getElementById('btn-timer-start').classList.add('hidden');
+      document.getElementById('btn-timer-pause').classList.remove('hidden');
+      document.getElementById('timer-status').innerText = 'Corriendo';
+      document.getElementById('timer-status').className = 'text-xs text-emerald-400 pulse-dot';
+    }
+
+    function pausarTimer() {
+      if (!timerCorriendo) return;
+      timerCorriendo = false;
+      clearInterval(intervaloTimer);
+      document.getElementById('btn-timer-start').classList.remove('hidden');
+      document.getElementById('btn-timer-pause').classList.add('hidden');
+      document.getElementById('timer-status').innerText = 'Pausado';
+      document.getElementById('timer-status').className = 'text-xs text-yellow-400';
+    }
+
+    function resetTimer() {
+      timerCorriendo = false;
+      clearInterval(intervaloTimer);
+      segundos = 0;
+      document.getElementById('timer-display').innerText = '00:00:00';
+      document.getElementById('btn-timer-start').classList.remove('hidden');
+      document.getElementById('btn-timer-pause').classList.add('hidden');
+      document.getElementById('timer-status').innerText = 'Reinicado';
+      document.getElementById('timer-status').className = 'text-xs text-gray-500';
+      calcularResultados();
+    }
+
+    /* ======================================================
+       CÁLCULOS
+       ====================================================== */
+    function calcularResultados() {
+      var ini = parseFloat(document.getElementById('bateria-inicio').value) || 0;
+      var fin = parseFloat(document.getElementById('bateria-fin').value) || 0;
+      var umbral = parseFloat(document.getElementById('umbral-minimo').value) || 4;
+      var duracionMin = segundos / 60;
+      var porcentajeConsumido = Math.max(0, ini - fin);
+      var minPorUno = porcentajeConsumido > 0 ? duracionMin / porcentajeConsumido : 0;
+      var autonomiaHoras = minPorUno > 0 ? (minPorUno * ini) / 60 : 0;
+
+      document.getElementById('res-duracion').innerText = duracionMin > 0 ? duracionMin.toFixed(1) + ' min' : '0 min';
+      document.getElementById('res-consumo').innerText = porcentajeConsumido.toFixed(1) + '%';
+      document.getElementById('res-min-uno').innerText = minPorUno.toFixed(1);
+      document.getElementById('res-autonomia').innerText = autonomiaHoras.toFixed(1) + ' h';
+
+      if (autonomiaHoras >= umbral && autonomiaHoras > 0) {
+        document.getElementById('res-estado').className = 'mt-3 p-3 rounded-lg border text-center text-sm font-semibold result-ok border-emerald-500/30';
+        document.getElementById('res-estado').innerHTML = '<i class="fas fa-check-circle text-emerald-400 mr-1"></i> <span class="text-emerald-400">OK</span> — Autonomía dentro del rango aceptable (' + autonomiaHoras.toFixed(1) + 'h ≥ ' + umbral + 'h mínimo)';
+      } else if (autonomiaHoras > 0) {
+        document.getElementById('res-estado').className = 'mt-3 p-3 rounded-lg border text-center text-sm font-semibold result-warn border-yellow-500/30';
+        document.getElementById('res-estado').innerHTML = '<i class="fas fa-exclamation-triangle text-yellow-400 mr-1"></i> <span class="text-yellow-400">⚠️ Alerta</span> — Autonomía baja (' + autonomiaHoras.toFixed(1) + 'h < ' + umbral + 'h mínimo)';
+      } else {
+        document.getElementById('res-estado').className = 'mt-3 p-3 rounded-lg border text-center text-sm font-semibold result-bad border-red-500/30';
+        document.getElementById('res-estado').innerHTML = '<i class="fas fa-times-circle text-red-400 mr-1"></i> <span class="text-red-400">Sin datos suficientes</span> — Ejecuta el test y/o introduce batería inicio/fin';
+      }
+    }
+
+    /* ======================================================
+       GUARDAR
+       ====================================================== */
+    function guardarTest() {
+      var bateriaInicio = document.getElementById('bateria-inicio').value;
+      var bateriaFin = document.getElementById('bateria-fin').value;
+      var duracionMin = segundos / 60;
+      var notas = document.getElementById('notas').value;
+
+      var satActual = satId;
+      if (!satActual) {
+        satActual = prompt('Nº de SAT del mando (para guardar el test):');
+        if (!satActual) return;
+        satId = satActual;
+        document.getElementById('header-info').innerText = 'SAT ' + satId + (modelo ? ' — ' + modelo : '');
+      }
+      if (!bateriaInicio || !bateriaFin) {
+        alert('Introduce los niveles de batería (inicio y fin).');
+        return;
+      }
+      if (duracionMin < 1) {
+        alert('El test debe durar al menos 1 minuto.');
+        return;
+      }
+
+      var btn = document.getElementById('btn-guardar');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Guardando...';
+
+      setTimeout(function() {
+        var bateriaInicioNum = parseFloat(bateriaInicio) || 0;
+        var bateriaFinNum = parseFloat(bateriaFin) || 0;
+        var duracionNum = parseFloat(duracionMin.toFixed(1)) || 0;
+        var porcentajeConsumido = Math.max(0, bateriaInicioNum - bateriaFinNum);
+        var minPor1 = porcentajeConsumido > 0 ? duracionNum / porcentajeConsumido : 0;
+        var autonomiaHoras = minPor1 > 0 ? (minPor1 * bateriaInicioNum) / 60 : 0;
+        var now = new Date();
+        var fechaStr = now.toLocaleDateString('es-ES');
+        var horaStr = now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+
+        var test = {
+          fecha: fechaStr,
+          hora: horaStr,
+          duracionMin: duracionNum,
+          bateriaInicio: bateriaInicioNum,
+          bateriaFin: bateriaFinNum,
+          pctConsumido: Math.round(porcentajeConsumido * 100) / 100,
+          minPorUno: Math.round(minPor1 * 100) / 100,
+          autonomiaHoras: Math.round(autonomiaHoras * 100) / 100,
+          notas: notas
+        };
+
+        var key = 'testBateria_' + satActual;
+        var historial = JSON.parse(localStorage.getItem(key) || '[]');
+        historial.push(test);
+        localStorage.setItem(key, JSON.stringify(historial));
+
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-save mr-1"></i> Guardar en BD';
+        alert('✅ Test guardado correctamente.');
+        cargarHistorico();
+      }, 200);
+    }
+
+    /* ======================================================
+       HISTÓRICO
+       ====================================================== */
+    function cargarHistorico() {
+      var container = document.getElementById('lista-historico');
+      if (!satId) {
+        container.innerHTML = '<span class="text-gray-600">Los tests se guardan en el navegador (localStorage).</span>';
+        return;
+      }
+
+      var key = 'testBateria_' + satId;
+      var historial = JSON.parse(localStorage.getItem(key) || '[]');
+
+      if (historial.length === 0) {
+        container.innerHTML = '<span class="text-gray-600 italic">Aún no hay tests guardados para este SAT.</span>';
+        return;
+      }
+
+      var umbral = parseFloat(document.getElementById('umbral-minimo').value) || 4;
+      container.innerHTML = historial.map(function(t) {
+        var estado = t.autonomiaHoras >= umbral ? 'text-green-400' : (t.autonomiaHoras > 0 ? 'text-yellow-400' : 'text-gray-500');
+        return '<div class="border-b border-gray-800 py-2 flex justify-between items-center text-xs">' +
+          '<span class="text-gray-400">' + t.fecha + ' — ' + t.duracionMin.toFixed(0) + ' min</span>' +
+          '<span>' + t.bateriaInicio + '% → ' + t.bateriaFin + '%</span>' +
+          '<span class="font-bold ' + estado + '">' + t.autonomiaHoras.toFixed(1) + 'h</span>' +
+          '<span class="text-gray-600">' + (t.notas ? escHtml(t.notas.substring(0, 30)) + '...' : '') + '</span>' +
+        '</div>';
+      }).join('');
+    }
+
+    /* ======================================================
+       IMPRIMIR
+       ====================================================== */
+    function imprimirTest() {
+      var bateriaInicio = document.getElementById('bateria-inicio').value || '—';
+      var bateriaFin = document.getElementById('bateria-fin').value || '—';
+      var duracionMin = (segundos / 60).toFixed(1);
+      var porcentajeConsumido = Math.max(0, (parseFloat(bateriaInicio) || 0) - (parseFloat(bateriaFin) || 0));
+      var autonomia = document.getElementById('res-autonomia').innerText;
+      var estado = document.getElementById('res-estado').innerText;
+      var notas = document.getElementById('notas').value || 'Sin notas';
+      var umbral = document.getElementById('umbral-minimo').value || '4';
+      var usbInfo = usbConectado ? 'Sí (voltaje auto: ' + (usbVoltajeLeido ? usbVoltajeLeido.toFixed(2) + 'V' : 'N/A') + ')' : 'No — datos manuales';
+
+      var w = window.open('', '_blank', 'width=800,height=600');
+      if (!w) { alert('Permite popups para imprimir.'); return; }
+      w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>Test Batería SAT ' + satId + '</title>');
+      w.document.write('<style>body{font-family:sans-serif;padding:40px;color:#111;background:#fff;}h1{color:#1e40af;}h2{margin-top:24px;color:#374151;}table{width:100%;border-collapse:collapse;margin:12px 0;}th,td{border:1px solid #d1d5db;padding:8px 12px;text-align:left;font-size:13px;}th{background:#f3f4f6;font-weight:600;} .ok{color:#059669;font-weight:bold;} .warn{color:#d97706;font-weight:bold;} .footer{margin-top:40px;font-size:11px;color:#9ca3af;}@media print{body{padding:20px;}}</style>');
+      w.document.write('</head><body>');
+      w.document.write('<h1>🔋 Informe de Test de Batería</h1>');
+      w.document.write('<p><strong>SAT:</strong> ' + satId + '</p>');
+      w.document.write('<p><strong>Modelo:</strong> ' + escHtml(modelo) + '</p>');
+      w.document.write('<p><strong>Fecha:</strong> ' + new Date().toISOString().slice(0, 10) + '</p>');
+      w.document.write('<p><strong>Lectura USB Automática:</strong> ' + usbInfo + '</p>');
+      w.document.write('<h2>Datos del Test</h2>');
+      w.document.write('<table><tr><th>Métrica</th><th>Valor</th></tr>');
+      w.document.write('<tr><td>Lectura USB de voltaje</td><td>' + (usbVoltajeLeido ? usbVoltajeLeido.toFixed(2) + ' V' : 'No disponible') + '</td></tr>');
+      w.document.write('<tr><td>Duración del test</td><td>' + duracionMin + ' min</td></tr>');
+      w.document.write('<tr><td>Batería al inicio</td><td>' + bateriaInicio + '%</td></tr>');
+      w.document.write('<tr><td>Batería al finalizar</td><td>' + bateriaFin + '%</td></tr>');
+      w.document.write('<tr><td>% Consumido</td><td>' + porcentajeConsumido.toFixed(1) + '%</td></tr>');
+      w.document.write('<tr><td>Autonomía estimada</td><td>' + autonomia + '</td></tr>');
+      w.document.write('<tr><td>Umbral mínimo</td><td>' + umbral + ' h</td></tr>');
+      w.document.write('<tr><td>Resultado</td><td>' + estado + '</td></tr>');
+      w.document.write('</table>');
+      w.document.write('<h2>Notas</h2><p>' + escHtml(notas).replace(/\n/g, '<br>') + '</p>');
+      w.document.write('<div class="footer">Documento generado por FIX-PAD — Lectura WebUSB/GIP estilo DriftGuard</div>');
+      w.document.write('</body></html>');
+      w.document.close();
+      w.print();
+    }
+
+    function escHtml(str) {
+      if (!str) return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // Recalcular al cargar y cada 5s si el timer está corriendo
+    setInterval(function() {
+      if (timerCorriendo) calcularResultados();
+    }, 5000);
+  </script>
 </body>
 </html>
