@@ -302,9 +302,14 @@
           if (len < 30) return null;
           var bat = dataView.getUint8(29);
           var bat_data = bat & 0x0F;
-          if (bat_data < 10) return bat_data * 10 + 5;
-          if (bat_data === 10) return 100;
-          return 0;
+          var cable = ((bat >> 4) & 1) === 1;
+          if (cable) {
+            if (bat_data < 10) return Math.min(bat_data * 10 + 5, 100);
+            if (bat_data === 10 || bat_data === 11) return 100;
+            return 0;
+          } else {
+            return bat_data < 10 ? bat_data * 10 + 5 : 100;
+          }
         }
         case 'ds5': {
           if (len < 53) return null;
