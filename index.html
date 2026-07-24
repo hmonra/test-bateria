@@ -394,15 +394,20 @@
         statusText.innerText = 'Conectado — leyendo batería...';
         statusText.className = 'text-xs text-emerald-400';
 
-        // Leer feature report 0x81 (solo DS4/DS5) para buscar voltaje real
+        // Leer feature reports para buscar voltaje real
         (async function() {
-          try {
-            var fr = await hidDevice.receiveFeatureReport(0x81);
-            var frBytes = [];
-            for (var i = 0; i < Math.min(fr.byteLength, 41); i++) frBytes.push(fr.getUint8(i).toString(16).padStart(2, '0'));
-            document.getElementById('usb-debug').innerHTML += '<br>FR(0x81): [' + frBytes.join(' ') + ']';
-          } catch (e) {
-            document.getElementById('usb-debug').innerHTML += '<br>FR(0x81): error - ' + e.message;
+          var frReports = [0x81, 0x82, 0xa3];
+          var debugEl = document.getElementById('usb-debug');
+          debugEl.innerHTML = '';
+          for (var fi = 0; fi < frReports.length; fi++) {
+            try {
+              var fr = await hidDevice.receiveFeatureReport(frReports[fi]);
+              var frBytes = [];
+              for (var i = 0; i < Math.min(fr.byteLength, 48); i++) frBytes.push(fr.getUint8(i).toString(16).padStart(2, '0'));
+              debugEl.innerHTML += 'FR(0x' + frReports[fi].toString(16) + '): len=' + fr.byteLength + ' [' + frBytes.join(' ') + ']<br>';
+            } catch (e) {
+              debugEl.innerHTML += 'FR(0x' + frReports[fi].toString(16) + '): error - ' + e.message + '<br>';
+            }
           }
         })();
 
@@ -461,8 +466,9 @@
       var v = new DataView(buf);
       v.setUint8(0, 0xFF);
       v.setUint8(1, 0x00);
-      v.setUint8(2, weak);
-      v.setUint8(3, strong);
+      v.setUint8(2, 0x00);
+      v.setUint8(3, weak);
+      v.setUint8(4, strong);
       return buf;
     }
 
