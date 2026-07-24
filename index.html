@@ -77,7 +77,8 @@
     </div>
 
     <!-- DEBUG HID -->
-    <div class="bg-gray-950 border border-gray-800 rounded-lg p-2 text-[10px] font-mono text-gray-600 no-print" id="usb-debug">Esperando reporte HID...</div>
+    <div class="bg-gray-950 border border-gray-800 rounded-lg p-2 text-[10px] font-mono text-gray-600 no-print" id="usb-report-debug">Esperando reporte HID...</div>
+    <div class="bg-gray-950 border border-gray-800 rounded-lg p-2 text-[10px] font-mono text-yellow-600 no-print" id="usb-debug"></div>
 
     <!-- CONTROLES DE TEST -->
     <div class="bg-gray-900/80 border border-gray-800 rounded-xl p-4 no-print">
@@ -252,7 +253,6 @@
     var intervaloTimer = null;
     var segundos = 0;
     var timerCorriendo = false;
-    var vibIntervalo = null;
     var vibCorriendo = false;
     var usbVoltajeLeido = null;
     var usbConectado = false;
@@ -417,7 +417,7 @@
           var tmp = [];
           for (var i = 0; i < Math.min(e.data.byteLength, 32); i++) tmp.push(e.data.getUint8(i).toString(16).padStart(2, '0'));
           lastReportBytes = tmp.join(' ');
-          document.getElementById('usb-debug').innerHTML =
+          document.getElementById('usb-report-debug').innerHTML =
             'ReportID=0x' + lastReportId.toString(16) + ' Len=' + lastReportLen + ' [' + lastReportBytes + ']';
 
           if (batteryRead) return;
@@ -454,24 +454,41 @@
     }
 
     /* ======================================================
-       VIBRACIÓN AUTOMÁTICA (VibrationActuator)
+       VIBRACIÓN AUTOMÁTICA (WebHID Output Report)
        ====================================================== */
+    function rumbleBufDS4(strong, weak) {
+      var buf = new ArrayBuffer(31);
+      var v = new DataView(buf);
+      v.setUint8(0, 0xFF);
+      v.setUint8(1, 0x00);
+      v.setUint8(2, weak);
+      v.setUint8(3, strong);
+      return buf;
+    }
+
+    async function sendRumble(strong, weak) {
+      if (!hidDevice || !hidDevice.opened) return;
+      var tipo = detectarTipoMando(hidDevice);
+      try {
+        if (tipo === 'ds4') {
+          await hidDevice.sendOutputReport(0x05, rumbleBufDS4(strong, weak));
+        }
+      } catch (e) {
+        console.error('Rumble error:', e);
+      }
+    }
+
     async function iniciarVibracion() {
       if (vibCorriendo) return;
 
-      // Verificar soporte de vibración en gamepads conectados
-      var gamepads = navigator.getGamepads();
-      var vibGamepad = null;
-      for (var i = 0; i < gamepads.length; i++) {
-        var gp = gamepads[i];
-        if (gp && gp.vibrationActuator) {
-          vibGamepad = gp;
-          break;
-        }
+      if (!hidDevice || !hidDevice.opened) {
+        alert('No hay ningún mando conectado vía USB.\nConecta el mando por WebHID antes de iniciar el test.');
+        return;
       }
 
-      if (!vibGamepad) {
-        alert('No se detectó ningún mando con vibración conectado al navegador.\nConecta el mando por USB antes de iniciar el test.');
+      var tipo = detectarTipoMando(hidDevice);
+      if (tipo !== 'ds4') {
+        alert('Vibración por WebHID solo soportada para DualShock 4 de momento.');
         return;
       }
 
@@ -488,52 +505,21 @@
 
       function vibTick() {
         if (!vibCorriendo) return;
-        // Encender vibración fuerte
-        vibGamepad.vibrationActuator.playEffect('dual-rumble', {
-          strongMagnitude: 1.0,
-          weakMagnitude: 1.0,
-          duration: 500
-        }).catch(function() {});
-
-        // Programar pausa
-        setTimeout(function() {
+        sendRumble(255, 255);
+        window._vibTimerId = setTimeout(function() {
           if (!vibCorriendo) return;
-          // Apagar (duración muy corta = efecto de parada)
-          vibGamepad.vibrationActuator.playEffect('dual-rumble', {
-            strongMagnitude: 0.0,
-            weakMagnitude: 0.0,
-            duration: 50
-          }).catch(function() {});
-
-          // Siguiente ciclo
-          setTimeout(vibTick, (intervalo * 1000) - 50);
+          sendRumble(0, 0);
+          window._vibTimerId = setTimeout(vibTick, (intervalo * 1000) - 500);
         }, 500);
       }
 
       vibTick();
-
-      // También sincronizar vibración con el timer: si el timer se pausa, paramos vibración
-      // (el usuario puede pausar el test y continuar después)
     }
 
     function pararVibracion() {
       vibCorriendo = false;
-      if (vibIntervalo) { clearTimeout(vibIntervalo); vibIntervalo = null; }
-
-      // Intentar parar vibración del mando
-      try {
-        var gamepads = navigator.getGamepads();
-        for (var i = 0; i < gamepads.length; i++) {
-          var gp = gamepads[i];
-          if (gp && gp.vibrationActuator) {
-            gp.vibrationActuator.playEffect('dual-rumble', {
-              strongMagnitude: 0.0,
-              weakMagnitude: 0.0,
-              duration: 50
-            }).catch(function() {});
-          }
-        }
-      } catch (e) {}
+      if (window._vibTimerId) { clearTimeout(window._vibTimerId); window._vibTimerId = null; }
+      sendRumble(0, 0);
 
       var btnStart = document.getElementById('btn-vib-start');
       var btnStop = document.getElementById('btn-vib-stop');
