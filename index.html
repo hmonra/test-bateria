@@ -394,6 +394,18 @@
         statusText.innerText = 'Conectado — leyendo batería...';
         statusText.className = 'text-xs text-emerald-400';
 
+        // Leer feature report 0x81 (solo DS4/DS5) para buscar voltaje real
+        (async function() {
+          try {
+            var fr = await hidDevice.receiveFeatureReport(0x81);
+            var frBytes = [];
+            for (var i = 0; i < Math.min(fr.byteLength, 41); i++) frBytes.push(fr.getUint8(i).toString(16).padStart(2, '0'));
+            document.getElementById('usb-debug').innerHTML += '<br>FR(0x81): [' + frBytes.join(' ') + ']';
+          } catch (e) {
+            document.getElementById('usb-debug').innerHTML += '<br>FR(0x81): error - ' + e.message;
+          }
+        })();
+
         var batteryRead = false;
         var lastReportLen = 0;
         var lastReportId = -1;
