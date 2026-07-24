@@ -232,18 +232,16 @@
     /* ======================================================
        CONFIGURACIÓN HID — Xbox + PlayStation
        ====================================================== */
-    var SUPPORTED_DEVICES = [
-      // Xbox (Microsoft)
-      { vendorId: 0x045E, productId: 0x028E }, { vendorId: 0x045E, productId: 0x028F },
-      { vendorId: 0x045E, productId: 0x02D1 }, { vendorId: 0x045E, productId: 0x02DD },
-      { vendorId: 0x045E, productId: 0x02EA }, { vendorId: 0x045E, productId: 0x02E0 },
-      { vendorId: 0x045E, productId: 0x0B05 }, { vendorId: 0x045E, productId: 0x0B12 },
-      { vendorId: 0x045E, productId: 0x0B13 }, { vendorId: 0x045E, productId: 0x0B20 },
-      // PlayStation (Sony)
-      { vendorId: 0x054C, productId: 0x05C4 }, // DS4 v1
-      { vendorId: 0x054C, productId: 0x09CC }, // DS4 v2
-      { vendorId: 0x054C, productId: 0x0CE6 }, // DS5
-      { vendorId: 0x054C, productId: 0x0DF2 }, // DS5 Edge
+    var SUPPORTED_VENDORS = [
+      { vendorId: 0x045E }, // Microsoft (Xbox)
+      { vendorId: 0x054C }, // Sony (PlayStation)
+    ];
+
+    var SUPPORTED_PRODUCTS = [
+      // Xbox
+      0x028E, 0x028F, 0x02D1, 0x02DD, 0x02EA, 0x02E0, 0x0B05, 0x0B12, 0x0B13, 0x0B20,
+      // PlayStation
+      0x05C4, 0x09CC, 0x0CE6, 0x0DF2,
     ];
 
     var satId = '';
@@ -335,18 +333,18 @@
 
       var devices = [];
 
+      function esCompatible(d) {
+        return d.vendorId === 0x045E || d.vendorId === 0x054C;
+      }
+
       try {
         devices = await navigator.hid.getDevices();
-        devices = devices.filter(function(d) {
-          return SUPPORTED_DEVICES.some(function(s) {
-            return s.vendorId === d.vendorId && s.productId === d.productId;
-          });
-        });
+        devices = devices.filter(esCompatible);
       } catch (e) {}
 
       if (devices.length === 0) {
         try {
-          devices = await navigator.hid.requestDevice({ filters: SUPPORTED_DEVICES });
+          devices = await navigator.hid.requestDevice({ filters: SUPPORTED_VENDORS });
         } catch (e) {
           container.innerHTML = '<span class="text-gray-400"><i class="fas fa-info-circle mr-1"></i>No se seleccionó ningún dispositivo.</span>';
           statusText.innerText = 'Cancelado';
@@ -356,13 +354,20 @@
       }
 
       if (devices.length === 0) {
-        container.innerHTML = '<span class="text-gray-400"><i class="fas fa-info-circle mr-1"></i>No se encontraron mandos compatibles (Xbox o PlayStation).</span>';
+        container.innerHTML = '<span class="text-gray-400"><i class="fas fa-info-circle mr-1"></i>No se encontraron mandos Xbox o PlayStation.</span>';
         statusText.innerText = 'Sin dispositivos';
         statusText.className = 'text-xs text-gray-500';
         return;
       }
 
       hidDevice = devices[0];
+      if (SUPPORTED_PRODUCTS.indexOf(hidDevice.productId) === -1) {
+        container.innerHTML = '<span class="text-yellow-400"><i class="fas fa-exclamation-triangle mr-1"></i>Mando no soportado (PID 0x' + hidDevice.productId.toString(16).toUpperCase() + ').</span>';
+        statusText.innerText = 'No soportado';
+        statusText.className = 'text-xs text-yellow-400';
+        return;
+      }
+
       var tipo = detectarTipoMando(hidDevice);
       container.innerHTML = '';
       var devInfo = hidDevice.productName || ('Mando 0x' + hidDevice.productId.toString(16).toUpperCase());
