@@ -69,9 +69,9 @@
         </button>
         <div id="usb-devices-list" class="flex flex-col gap-1 text-xs flex-1 min-w-0"></div>
         <div id="usb-battery-info" class="hidden bg-gray-950 border border-gray-800 rounded-lg p-3 text-xs flex-shrink-0" style="min-width:180px">
-          <div class="text-gray-400 uppercase text-[10px] mb-1 font-semibold">Voltaje Leído</div>
+          <div class="text-gray-400 uppercase text-[10px] mb-1 font-semibold">Batería Leída</div>
           <div class="text-xl font-mono font-bold text-emerald-400" id="usb-voltage-val">—</div>
-          <div class="text-gray-500 mt-1" id="usb-battery-pct">Batería estimada: —</div>
+          <div class="text-gray-500 mt-1" id="usb-battery-pct">Esperando...</div>
         </div>
       </div>
     </div>
@@ -429,11 +429,10 @@
           var pct = parsearBateria(e.data, tipo, e.reportId);
           if (pct !== null && pct >= 0 && pct <= 100) {
             batteryRead = true;
-            var voltage = 3.0 + (pct / 100) * 1.2;
-            usbVoltajeLeido = voltage;
+            usbVoltajeLeido = pct;
             batteryInfo.classList.remove('hidden');
             document.getElementById('usb-voltage-val').innerText = pct + '%';
-            document.getElementById('usb-battery-pct').innerText = 'Voltaje estimado: ' + voltage.toFixed(2) + 'V';
+            document.getElementById('usb-battery-pct').innerText = 'Leído del reporte HID';
             badge.classList.remove('hidden');
             document.getElementById('bateria-inicio').value = pct;
             document.getElementById('unidad-inicio').innerText = '%';
@@ -464,24 +463,47 @@
     function rumbleBufDS4(strong, weak) {
       var buf = new ArrayBuffer(31);
       var v = new DataView(buf);
-      v.setUint8(0, 0xFF);
+      v.setUint8(0, 0x07);
       v.setUint8(1, 0x00);
       v.setUint8(2, 0x00);
       v.setUint8(3, weak);
       v.setUint8(4, strong);
+      v.setUint8(5, 0x00);
+      v.setUint8(6, 0x00);
+      v.setUint8(7, 0x00);
       return buf;
     }
 
     async function sendRumble(strong, weak) {
       if (!hidDevice || !hidDevice.opened) return;
-      var tipo = detectarTipoMando(hidDevice);
       try {
-        if (tipo === 'ds4') {
-          await hidDevice.sendOutputReport(0x05, rumbleBufDS4(strong, weak));
-        }
+        await hidDevice.sendReport(0x05, new Uint8Array(rumbleBufDS4(strong, weak)));
       } catch (e) {
-        console.error('Rumble error:', e);
+        try {
+          await hidDevice.sendOutputReport(0x05, rumbleBufDS4(strong, weak));
+        } catch (e2) {}
       }
+    }
+
+    var _vibInitSent = false;
+
+    async function initRumble() {
+      if (!hidDevice || !hidDevice.opened || _vibInitSent) return;
+      _vibInitSent = true;
+      var buf = new ArrayBuffer(31);
+      var v = new DataView(buf);
+      v.setUint8(0, 0x02);
+      v.setUint8(1, 0x00);
+      v.setUint8(2, 0x00);
+      v.setUint8(3, 0x00);
+      v.setUint8(4, 0x00);
+      v.setUint8(5, 0x00);
+      v.setUint8(6, 0x00);
+      v.setUint8(7, 0x00);
+      v.setUint8(8, 0x00);
+      try {
+        await hidDevice.sendReport(0x05, new Uint8Array(buf));
+      } catch (e) {}
     }
 
     async function iniciarVibracion() {
@@ -489,12 +511,6 @@
 
       if (!hidDevice || !hidDevice.opened) {
         alert('No hay ningún mando conectado vía USB.\nConecta el mando por WebHID antes de iniciar el test.');
-        return;
-      }
-
-      var tipo = detectarTipoMando(hidDevice);
-      if (tipo !== 'ds4') {
-        alert('Vibración por WebHID solo soportada para DualShock 4 de momento.');
         return;
       }
 
@@ -511,7 +527,7 @@
 
       function vibTick() {
         if (!vibCorriendo) return;
-        sendRumble(255, 255);
+        sendRumble(180, 180);
         window._vibTimerId = setTimeout(function() {
           if (!vibCorriendo) return;
           sendRumble(0, 0);
@@ -519,6 +535,7 @@
         }, 500);
       }
 
+      initRumble();
       vibTick();
     }
 
@@ -718,7 +735,7 @@
       var estado = document.getElementById('res-estado').innerText;
       var notas = document.getElementById('notas').value || 'Sin notas';
       var umbral = document.getElementById('umbral-minimo').value || '4';
-      var usbInfo = usbConectado ? 'Sí (voltaje auto: ' + (usbVoltajeLeido ? usbVoltajeLeido.toFixed(2) + 'V' : 'N/A') + ')' : 'No — datos manuales';
+      var usbInfo = usbConectado ? 'Sí (batería auto: ' + (usbVoltajeLeido !== null ? usbVoltajeLeido + '%' : 'N/A') + ')' : 'No — datos manuales';
 
       var w = window.open('', '_blank', 'width=800,height=600');
       if (!w) { alert('Permite popups para imprimir.'); return; }
@@ -732,7 +749,7 @@
       w.document.write('<p><strong>Lectura USB Automática:</strong> ' + usbInfo + '</p>');
       w.document.write('<h2>Datos del Test</h2>');
       w.document.write('<table><tr><th>Métrica</th><th>Valor</th></tr>');
-      w.document.write('<tr><td>Lectura USB de voltaje</td><td>' + (usbVoltajeLeido ? usbVoltajeLeido.toFixed(2) + ' V' : 'No disponible') + '</td></tr>');
+      w.document.write('<tr><td>Lectura USB de batería</td><td>' + (usbVoltajeLeido !== null ? usbVoltajeLeido + '%' : 'No disponible') + '</td></tr>');
       w.document.write('<tr><td>Duración del test</td><td>' + duracionMin + ' min</td></tr>');
       w.document.write('<tr><td>Batería al inicio</td><td>' + bateriaInicio + '%</td></tr>');
       w.document.write('<tr><td>Batería al finalizar</td><td>' + bateriaFin + '%</td></tr>');
