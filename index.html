@@ -259,6 +259,20 @@
     var umbralVoltajeMax = 4.2;
     var umbralVoltajeMin = 3.0;
 
+    function pctToVoltage(pct) {
+      if (pct >= 100) return 4.20;
+      if (pct >= 90) return 4.10;
+      if (pct >= 80) return 3.96;
+      if (pct >= 70) return 3.88;
+      if (pct >= 60) return 3.82;
+      if (pct >= 50) return 3.76;
+      if (pct >= 40) return 3.70;
+      if (pct >= 30) return 3.62;
+      if (pct >= 20) return 3.50;
+      if (pct >= 10) return 3.30;
+      return 3.00;
+    }
+
     /* ======================================================
        INICIO
        ====================================================== */
@@ -424,6 +438,11 @@
           lastReportBytes = tmp.join(' ');
           document.getElementById('usb-report-debug').innerHTML =
             'ReportID=0x' + lastReportId.toString(16) + ' Len=' + lastReportLen + ' [' + lastReportBytes + ']';
+          if (lastReportLen > 29) {
+            var batRaw = e.data.getUint8(29);
+            document.getElementById('usb-debug').innerHTML =
+              'Battery byte 29: 0x' + batRaw.toString(16) + ' (' + batRaw + ') — bat_data=' + (batRaw & 0x0F) + ' cable=' + ((batRaw >> 4) & 1) + ' ' + (lastReportLen > 40 ? '+ ' + (lastReportLen - 32) + ' more bytes' : '');
+          }
 
           if (batteryRead) return;
           var pct = parsearBateria(e.data, tipo, e.reportId);
@@ -432,7 +451,7 @@
             usbVoltajeLeido = pct;
             batteryInfo.classList.remove('hidden');
             document.getElementById('usb-voltage-val').innerText = pct + '%';
-            document.getElementById('usb-battery-pct').innerText = 'Leído del reporte HID';
+            document.getElementById('usb-battery-pct').innerText = 'Voltaje estimado: ' + pctToVoltage(pct).toFixed(2) + 'V';
             badge.classList.remove('hidden');
             document.getElementById('bateria-inicio').value = pct;
             document.getElementById('unidad-inicio').innerText = '%';
