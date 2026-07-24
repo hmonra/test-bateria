@@ -230,11 +230,10 @@
 
   <script>
     /* ======================================================
-       CONFIGURACIÓN WEBUS USB — Xbox Controllers
+       CONFIGURACIÓN HID — Xbox Controllers
        ====================================================== */
     var XBOX_VID = 0x045E;
-    // Xbox One S/X (varios PIDs)
-    var XBOX_PIDS = [0x028E, 0x028F, 0x02D1, 0x02DD, 0x02EA, 0x02E0, 0x0B05, 0x0B13];
+    var XBOX_PIDS = [0x028E, 0x028F, 0x02D1, 0x02DD, 0x02EA, 0x02E0, 0x0B05, 0x0B13, 0x0B12, 0x0B20];
 
     var satId = '';
     var modelo = '';
@@ -260,17 +259,18 @@
     });
 
     /* ======================================================
-       WEUSB + LECTURA DE VOLTAJE (GIP-style)
+       WEBHID + LECTURA DE BATERÍA (como dualshock-tools)
        ====================================================== */
+    var hidDevice = null;
+
     async function conectarUsb() {
       var container = document.getElementById('usb-devices-list');
       var statusText = document.getElementById('usb-status-text');
       var batteryInfo = document.getElementById('usb-battery-info');
       var badge = document.getElementById('usb-badge');
 
-      // Verificar soporte
-      if (!navigator.usb) {
-        container.innerHTML = '<span class="text-red-400"><i class="fas fa-exclamation-triangle mr-1"></i>WebUSB no soportado. Usa Chrome.</span>';
+      if (!navigator.hid) {
+        container.innerHTML = '<span class="text-red-400"><i class="fas fa-exclamation-triangle mr-1"></i>WebHID no soportado. Usa Chrome o Edge.</span>';
         statusText.innerText = 'No soportado';
         return;
       }
@@ -278,25 +278,22 @@
       statusText.innerText = 'Buscando...';
       statusText.className = 'text-xs text-yellow-400';
 
-      var xboxDevices = [];
+      var devices = [];
 
       try {
-        var devices = await navigator.usb.getDevices();
-        xboxDevices = devices.filter(function(d) {
+        devices = await navigator.hid.getDevices();
+        devices = devices.filter(function(d) {
           return d.vendorId === XBOX_VID && XBOX_PIDS.indexOf(d.productId) !== -1;
         });
-      } catch (e) {
-        xboxDevices = [];
-      }
+      } catch (e) {}
 
-      if (xboxDevices.length === 0) {
+      if (devices.length === 0) {
         try {
-          var device = await navigator.usb.requestDevice({
+          devices = await navigator.hid.requestDevice({
             filters: XBOX_PIDS.map(function(pid) {
               return { vendorId: XBOX_VID, productId: pid };
             })
           });
-          xboxDevices = [device];
         } catch (e) {
           container.innerHTML = '<span class="text-gray-400"><i class="fas fa-info-circle mr-1"></i>No se seleccionó ningún dispositivo.</span>';
           statusText.innerText = 'Cancelado';
@@ -305,114 +302,86 @@
         }
       }
 
-      if (xboxDevices.length === 0) {
-        container.innerHTML = '<span class="text-gray-400"><i class="fas fa-info-circle mr-1"></i>No se encontraron mandos Xbox USB conectados (VID ' + XBOX_VID.toString(16).toUpperCase() + ').</span>';
+      if (devices.length === 0) {
+        container.innerHTML = '<span class="text-gray-400"><i class="fas fa-info-circle mr-1"></i>No se encontraron mandos Xbox (VID ' + XBOX_VID.toString(16).toUpperCase() + ').</span>';
         statusText.innerText = 'Sin dispositivos';
         statusText.className = 'text-xs text-gray-500';
         return;
       }
 
-        container.innerHTML = '';
-        var allSuccess = true;
-
-        for (var i = 0; i < xboxDevices.length; i++) {
-          (function(device) {
-            var devInfo = device.productName || ('Xbox 0x' + device.productId.toString(16).toUpperCase());
-            var div = document.createElement('div');
-            div.className = 'flex items-center gap-2 text-gray-300';
-            div.innerHTML = '<span class="usb-status non" id="usb-dot-' + device.deviceId + '"></span><span class="truncate">' + escHtml(devInfo) + '</span><span class="text-gray-600 ml-auto">0x' + device.productId.toString(16).toUpperCase() + '</span>';
-            container.appendChild(div);
-
-            // Intentar abrir y leer
-            leerVoltajeWebUSB(device, div);
-          })(xboxDevices[i]);
-        }
-    }
-
-    async function leerVoltajeWebUSB(device, divEl) {
-      var dot = document.getElementById('usb-dot-' + device.deviceId);
-      var statusText = document.getElementById('usb-status-text');
-      var batteryInfo = document.getElementById('usb-battery-info');
-      var badge = document.getElementById('usb-badge');
+      hidDevice = devices[0];
+      container.innerHTML = '';
+      var devInfo = hidDevice.productName || ('Xbox 0x' + hidDevice.productId.toString(16).toUpperCase());
+      var div = document.createElement('div');
+      div.className = 'flex items-center gap-2 text-gray-300';
+      div.innerHTML = '<span class="usb-status non" id="usb-dot"></span><span class="truncate">' + escHtml(devInfo) + '</span><span class="text-gray-600 ml-auto">0x' + hidDevice.productId.toString(16).toUpperCase() + '</span>';
+      container.appendChild(div);
 
       try {
-        if (device.opened === false || device.opened === undefined) {
-          await device.open();
-        }
-        if (!device.configuration) {
-          await device.selectConfiguration(1);
-        }
-        await device.claimInterface(0);
+        if (hidDevice.opened) await hidDevice.close();
+        await hidDevice.open();
 
         usbConectado = true;
-        usbDevices = true;
-        if (dot) { dot.className = 'usb-status ok'; }
-        statusText.innerText = 'Conectado — leyendo voltaje...';
+        document.getElementById('usb-dot').className = 'usb-status ok';
+        statusText.innerText = 'Conectado — leyendo batería...';
         statusText.className = 'text-xs text-emerald-400';
 
-        // Leer voltaje vía GIP protocol (Xbox interrupt endpoint)
-        // El endpoint de entrada GIP para Xbox es 0x81 (IN interrupt)
-        // GIP State Packet: Report ID 0x20 con datos de batería
-        // Para Xbox One, la batería está en bytes específicos del packet
-        // Intentamos leer del endpoint de interrupción (1 = IN interrupt, ep 0x81)
+        var batteryRead = false;
 
-        var voltage = null;
-        var batteryPct = null;
+        hidDevice.oninputreport = function(e) {
+          if (batteryRead) return;
+          var bytes = new Uint8Array(e.data.buffer);
+          if (bytes.length < 2) return;
 
-        // Método 1: Leer características del dispositivo (WebUSB getDeviceInfo)
-        try {
-          // Algunos dispositivos USB exponen la batería en configuración
-          // Xbox usa HID + GIP por encima, así que intentamos lectura directa
-          var result = await device.transferIn(1, 64); // endpoint 1 IN, máx 64 bytes
-          if (result && result.data) {
-            var bytes = new Uint8Array(result.data.buffer);
-            // Intentar parsear GIP state packet
-            // Esto es un intento basado en protocolo conocido
-            // Byte 4 o 5 en muchos mandos Xbox contiene % batería
-            // Voltaje real se deriva de: voltaje = 3.0 + (%/100) * 1.2 (aprox para Li-ion single cell)
-            // Para información exacta necesitaríamos reverse-engineering más profundo
-            batteryPct = bytes[4] || null;
-            if (batteryPct !== null && batteryPct <= 100) {
-              // Derivar voltaje aproximado
-              voltage = 3.0 + (batteryPct / 100) * 1.2;
-            }
-            // Si bytes[0] == 0x20, es GIP state report
-            if (bytes[0] === 0x20 && bytes.length >= 6) {
-              batteryPct = bytes[2];
-              voltage = (bytes[3] / 100.0) || voltage;
+          var batteryPct = null;
+          var reportId = e.reportId;
+
+          // Xbox One/Series: input report ID 0x01, battery at byte 13
+          // upper nibble = level (0-10), lower nibble = type (0=wired,1=disconnected,2=AA,3=Li-ion)
+          if (reportId === 0x01 && bytes.length > 14) {
+            var battByte = bytes[13];
+            var level = (battByte >> 4) & 0x0F; // upper nibble: 0=empty ... 10=full
+            var type = battByte & 0x0F;           // lower nibble: battery type
+            if (level > 0 && level <= 10) {
+              batteryPct = Math.round((level / 10) * 100);
             }
           }
-        } catch (e) {
-          // transferIn falló, el endpoint podría ser diferente
-          console.warn('GIP transferIn falló (esperado en algunos modelos):', e.message);
-        }
 
-        // Si logramos leer voltaje
-        if (voltage !== null && voltage > 2) {
-          usbVoltajeLeido = voltage;
-          batteryInfo.classList.remove('hidden');
-          document.getElementById('usb-voltage-val').innerText = voltage.toFixed(2) + ' V';
-          var pct = Math.round(((voltage - umbralVoltajeMin) / (umbralVoltajeMax - umbralVoltajeMin)) * 100);
-          pct = Math.max(0, Math.min(100, pct));
-          document.getElementById('usb-battery-pct').innerText = 'Batería estimada: ' + pct + '%';
-          badge.classList.remove('hidden');
-          document.getElementById('bateria-inicio').value = pct;
-          document.getElementById('unidad-inicio').innerText = '%';
-          calcularResultados();
-        } else {
-          // Fallback: el mando está conectado pero no pudimos leer voltaje por protocolo
-          if (dot) { dot.className = 'usb-status ok'; }
-          batteryInfo.classList.remove('hidden');
-          document.getElementById('usb-voltage-val').innerText = 'N/A';
-          document.getElementById('usb-battery-pct').innerText = 'Conectado — introducir manualmente';
-          badge.classList.remove('hidden');
-          badge.innerText = 'USB OK (manual)';
-        }
+          // Xbox Series X: report ID 0x04 is battery-specific
+          // byte 2 = level in %
+          if (reportId === 0x04 && bytes.length > 3) {
+            batteryPct = bytes[2];
+          }
+
+          if (batteryPct !== null && batteryPct > 0 && batteryPct <= 100) {
+            batteryRead = true;
+            var voltage = 3.0 + (batteryPct / 100) * 1.2;
+
+            usbVoltajeLeido = voltage;
+            batteryInfo.classList.remove('hidden');
+            document.getElementById('usb-voltage-val').innerText = batteryPct + '%';
+            document.getElementById('usb-battery-pct').innerText = 'Voltaje estimado: ' + voltage.toFixed(2) + 'V';
+            badge.classList.remove('hidden');
+            document.getElementById('bateria-inicio').value = batteryPct;
+            document.getElementById('unidad-inicio').innerText = '%';
+            calcularResultados();
+          }
+        };
+
+        // Timeout: si en 3 segs no se leyó batería, mostrar como manual
+        setTimeout(function() {
+          if (!batteryRead) {
+            batteryInfo.classList.remove('hidden');
+            document.getElementById('usb-voltage-val').innerText = 'N/A';
+            document.getElementById('usb-battery-pct').innerText = 'Conectado — introduce % manualmente';
+            badge.classList.remove('hidden');
+            badge.innerText = 'USB OK (manual)';
+          }
+        }, 3000);
 
       } catch (err) {
-        if (dot) { dot.className = 'usb-status err'; }
-        console.warn('Error WebUSB:', err.message);
-        statusText.innerText = 'Error de conexión (' + err.message + ')';
+        document.getElementById('usb-dot').className = 'usb-status err';
+        statusText.innerText = 'Error: ' + err.message;
         statusText.className = 'text-xs text-red-400';
       }
     }
