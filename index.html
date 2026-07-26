@@ -82,6 +82,7 @@
     <!-- DEBUG HID -->
     <div class="bg-gray-950 border border-gray-800 rounded-lg p-2 text-[10px] font-mono text-gray-600 no-print" id="usb-report-debug">Esperando reporte HID...</div>
     <div class="bg-gray-950 border border-gray-800 rounded-lg p-2 text-[10px] font-mono text-yellow-600 no-print" id="usb-debug"></div>
+    <div class="bg-gray-950 border border-gray-800 rounded-lg p-2 text-[10px] font-mono text-amber-400 no-print" id="usb-diag" style="display:none"></div>
 
     <!-- CONTROLES DE TEST -->
     <div class="bg-gray-900/80 border border-gray-800 rounded-xl p-4 no-print">
@@ -504,6 +505,7 @@
       document.getElementById('usb-badge').classList.add('hidden');
       document.getElementById('usb-report-debug').innerHTML = 'Esperando reporte HID...';
       document.getElementById('usb-debug').innerHTML = '';
+      document.getElementById('usb-diag').style.display = 'none';
     }
 
     /* ======================================================
@@ -709,8 +711,10 @@
         logs.push('No hay HID para probar output reports');
       }
 
-      document.getElementById('usb-debug').innerHTML = logs.join('<br>');
-      document.getElementById('usb-debug').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      var diagEl = document.getElementById('usb-diag');
+      diagEl.style.display = 'block';
+      diagEl.innerHTML = logs.join('<br>');
+      diagEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
 
     /* ======================================================
