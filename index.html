@@ -477,8 +477,19 @@
     }
 
     /* ======================================================
-       VIBRACIÓN AUTOMÁTICA (WebHID Output Report)
+       VIBRACIÓN AUTOMÁTICA (Gamepad API + WebHID)
        ====================================================== */
+    function findVibrationGamepad() {
+      try {
+        var gamepads = navigator.getGamepads();
+        for (var i = 0; i < gamepads.length; i++) {
+          var gp = gamepads[i];
+          if (gp && gp.vibrationActuator) return gp;
+        }
+      } catch (e) {}
+      return null;
+    }
+
     function rumbleBufDS4(strong, weak) {
       var buf = new ArrayBuffer(31);
       var v = new DataView(buf);
@@ -493,20 +504,44 @@
       return buf;
     }
 
-    async function sendRumble(strong, weak) {
-      if (!hidDevice || !hidDevice.opened) return;
+    async function sendRumbleGamepad(gp, strong, weak) {
+      if (!gp) return;
+      try {
+        if (strong === 0 && weak === 0) {
+          await gp.vibrationActuator.playEffect('dual-rumble', { duration: 1 });
+        } else {
+          await gp.vibrationActuator.playEffect('dual-rumble', {
+            strongMagnitude: Math.min(strong / 255, 1),
+            weakMagnitude: Math.min(weak / 255, 1),
+            duration: 500
+          });
+        }
+        return true;
+      } catch (e) { return false; }
+    }
+
+    async function sendRumbleWebHID(strong, weak) {
+      if (!hidDevice || !hidDevice.opened) return false;
       try {
         await hidDevice.sendReport(0x05, new Uint8Array(rumbleBufDS4(strong, weak)));
+        return true;
       } catch (e) {
         try {
           await hidDevice.sendOutputReport(0x05, rumbleBufDS4(strong, weak));
-        } catch (e2) {}
+          return true;
+        } catch (e2) { return false; }
       }
+    }
+
+    async function sendRumble(strong, weak) {
+      var gp = findVibrationGamepad();
+      if (gp && await sendRumbleGamepad(gp, strong, weak)) return;
+      await sendRumbleWebHID(strong, weak);
     }
 
     var _vibInitSent = false;
 
-    async function initRumble() {
+    async function initRumbleWebHID() {
       if (!hidDevice || !hidDevice.opened || _vibInitSent) return;
       _vibInitSent = true;
       var buf = new ArrayBuffer(31);
@@ -522,14 +557,18 @@
       v.setUint8(8, 0x00);
       try {
         await hidDevice.sendReport(0x05, new Uint8Array(buf));
-      } catch (e) {}
+      } catch (e) {
+        try { await hidDevice.sendOutputReport(0x05, buf); } catch (e2) {}
+      }
     }
 
     async function iniciarVibracion() {
       if (vibCorriendo) return;
 
-      if (!hidDevice || !hidDevice.opened) {
-        alert('No hay ningún mando conectado vía USB.\nConecta el mando por WebHID antes de iniciar el test.');
+      var gp = findVibrationGamepad();
+      if (!gp && (!hidDevice || !hidDevice.opened)) {
+        alert('No se detectó ningún mando con vibración.\n'
+          + 'Conéctalo por USB y pulsa "Conectar Mandos USB", o por Bluetooth (se detecta automáticamente).');
         return;
       }
 
@@ -544,6 +583,9 @@
       statusEl.innerText = 'Vibrando';
       statusEl.className = 'text-xs text-purple-400 pulse-dot';
 
+      // Inicializar solo si usamos WebHID
+      if (!gp) initRumbleWebHID();
+
       function vibTick() {
         if (!vibCorriendo) return;
         sendRumble(180, 180);
@@ -554,14 +596,15 @@
         }, 500);
       }
 
-      initRumble();
       vibTick();
     }
 
     function pararVibracion() {
       vibCorriendo = false;
       if (window._vibTimerId) { clearTimeout(window._vibTimerId); window._vibTimerId = null; }
-      sendRumble(0, 0);
+      var gp = findVibrationGamepad();
+      if (gp) sendRumbleGamepad(gp, 0, 0);
+      sendRumbleWebHID(0, 0);
 
       var btnStart = document.getElementById('btn-vib-start');
       var btnStop = document.getElementById('btn-vib-stop');
