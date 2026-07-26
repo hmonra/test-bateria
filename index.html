@@ -35,7 +35,7 @@
   <header class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 p-4 border-b border-gray-800 bg-gray-900/60 shrink-0">
     <div>
       <h1 class="text-lg font-bold text-white flex items-center gap-2">
-        <i class="fas fa-battery-three-quarters text-emerald-400"></i> Test de Batería <span class="text-[10px] text-gray-600 font-mono font-normal ml-1" id="version-label">v1.3.0 — 2026-07-26 12:40 (#5)</span>
+        <i class="fas fa-battery-three-quarters text-emerald-400"></i> Test de Batería <span class="text-[10px] text-gray-600 font-mono font-normal ml-1" id="version-label">v1.4.0 — 2026-07-26 13:10 (#6)</span>
       </h1>
       <p class="text-xs text-gray-500 mt-0.5" id="header-info"></p>
     </div>
@@ -65,7 +65,10 @@
       </div>
       <div class="flex items-center gap-3 flex-wrap">
         <button onclick="conectarUsb()" id="btn-usb-connect" class="bg-blue-700 hover:bg-blue-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition-all cursor-pointer">
-          <i class="fas fa-search mr-1"></i> Conectar Mandos USB
+          <i class="fas fa-search mr-1"></i> Conectar Mando
+        </button>
+        <button onclick="desconectarUsb()" id="btn-usb-reset" class="bg-gray-700 hover:bg-gray-600 text-gray-300 font-semibold px-4 py-2 rounded-lg text-sm transition-all cursor-pointer">
+          <i class="fas fa-times mr-1"></i> Reset
         </button>
         <div id="usb-devices-list" class="flex flex-col gap-1 text-xs flex-1 min-w-0"></div>
         <div id="usb-battery-info" class="hidden bg-gray-950 border border-gray-800 rounded-lg p-3 text-xs flex-shrink-0" style="min-width:180px">
@@ -288,6 +291,7 @@
        WEBHID + LECTURA DE BATERÍA (Xbox + PS4 + PS5)
        ====================================================== */
     var hidDevice = null;
+    var _connType = 'usb';
 
     function detectarTipoMando(device) {
       if (device.vendorId === 0x045E) return 'xbox';
@@ -351,7 +355,14 @@
         return;
       }
 
-      statusText.innerText = 'Buscando...';
+      // Cerrar conexión anterior si existe
+      if (hidDevice && hidDevice.opened) {
+        try { hidDevice.oninputreport = null; } catch (e) {}
+        try { await hidDevice.close(); } catch (e) {}
+        hidDevice = null;
+      }
+
+      statusText.innerText = 'Selecciona un mando...';
       statusText.className = 'text-xs text-yellow-400';
 
       var devices = [];
@@ -361,19 +372,13 @@
       }
 
       try {
-        devices = await navigator.hid.getDevices();
+        devices = await navigator.hid.requestDevice({ filters: SUPPORTED_VENDORS });
         devices = devices.filter(esCompatible);
-      } catch (e) {}
-
-      if (devices.length === 0) {
-        try {
-          devices = await navigator.hid.requestDevice({ filters: SUPPORTED_VENDORS });
-        } catch (e) {
-          container.innerHTML = '<span class="text-gray-400"><i class="fas fa-info-circle mr-1"></i>No se seleccionó ningún dispositivo.</span>';
-          statusText.innerText = 'Cancelado';
-          statusText.className = 'text-xs text-gray-500';
-          return;
-        }
+      } catch (e) {
+        container.innerHTML = '<span class="text-gray-400"><i class="fas fa-info-circle mr-1"></i>No se seleccionó ningún dispositivo.</span>';
+        statusText.innerText = 'Cancelado';
+        statusText.className = 'text-xs text-gray-500';
+        return;
       }
 
       if (devices.length === 0) {
@@ -433,6 +438,8 @@
         hidDevice.oninputreport = function(e) {
           lastReportLen = e.data.byteLength;
           lastReportId = e.reportId;
+          if (lastReportId === 0x11) _connType = 'bt';
+          else if (lastReportId === 0x01) _connType = 'usb';
           var tmp = [];
           for (var i = 0; i < Math.min(e.data.byteLength, 32); i++) tmp.push(e.data.getUint8(i).toString(16).padStart(2, '0'));
           lastReportBytes = tmp.join(' ');
@@ -474,6 +481,26 @@
         statusText.innerText = 'Error: ' + err.message;
         statusText.className = 'text-xs text-red-400';
       }
+    }
+
+    async function desconectarUsb() {
+      pararVibracion();
+      if (hidDevice) {
+        try { hidDevice.oninputreport = null; } catch (e) {}
+        try { if (hidDevice.opened) await hidDevice.close(); } catch (e) {}
+        hidDevice = null;
+      }
+      _connType = 'usb';
+      _vibInitSent = false;
+      usbConectado = false;
+      usbVoltajeLeido = null;
+      document.getElementById('usb-devices-list').innerHTML = '';
+      document.getElementById('usb-status-text').innerText = 'No conectado';
+      document.getElementById('usb-status-text').className = 'text-xs text-gray-500';
+      document.getElementById('usb-battery-info').classList.add('hidden');
+      document.getElementById('usb-badge').classList.add('hidden');
+      document.getElementById('usb-report-debug').innerHTML = 'Esperando reporte HID...';
+      document.getElementById('usb-debug').innerHTML = '';
     }
 
     /* ======================================================
@@ -522,15 +549,20 @@
 
     async function sendRumbleWebHID(strong, weak) {
       if (!hidDevice || !hidDevice.opened) return false;
-      try {
-        await hidDevice.sendReport(0x05, new Uint8Array(rumbleBufDS4(strong, weak)));
-        return true;
-      } catch (e) {
+      var buf = rumbleBufDS4(strong, weak);
+      var ids = _connType === 'bt' ? [0x11, 0x05] : [0x05, 0x11];
+      for (var ri = 0; ri < ids.length; ri++) {
         try {
-          await hidDevice.sendOutputReport(0x05, rumbleBufDS4(strong, weak));
+          await hidDevice.sendReport(ids[ri], new Uint8Array(buf));
           return true;
-        } catch (e2) { return false; }
+        } catch (e) {
+          try {
+            await hidDevice.sendOutputReport(ids[ri], buf);
+            return true;
+          } catch (e2) {}
+        }
       }
+      return false;
     }
 
     async function sendRumble(strong, weak) {
@@ -555,10 +587,14 @@
       v.setUint8(6, 0x00);
       v.setUint8(7, 0x00);
       v.setUint8(8, 0x00);
-      try {
-        await hidDevice.sendReport(0x05, new Uint8Array(buf));
-      } catch (e) {
-        try { await hidDevice.sendOutputReport(0x05, buf); } catch (e2) {}
+      var ids = _connType === 'bt' ? [0x11, 0x05] : [0x05, 0x11];
+      for (var ri = 0; ri < ids.length; ri++) {
+        try {
+          await hidDevice.sendReport(ids[ri], new Uint8Array(buf));
+          return;
+        } catch (e) {
+          try { await hidDevice.sendOutputReport(ids[ri], buf); return; } catch (e2) {}
+        }
       }
     }
 
