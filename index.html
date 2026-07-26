@@ -122,6 +122,9 @@
         <button onclick="pararVibracion()" id="btn-vib-stop" class="bg-red-700 hover:bg-red-600 text-white font-semibold px-4 py-2 rounded-lg text-sm transition-all cursor-pointer hidden">
           <i class="fas fa-stop mr-1"></i> Parar Vibración
         </button>
+        <button onclick="testVibrationBt()" id="btn-vib-dbg" class="bg-gray-700 hover:bg-gray-600 text-gray-400 font-semibold px-3 py-2 rounded-lg text-xs transition-all cursor-pointer">
+          <i class="fas fa-bug mr-1"></i> Diag. Vibración
+        </button>
         <div class="flex items-center gap-2 text-xs text-gray-400">
           <span>Intervalo:</span>
           <input type="number" id="vib-interval" min="1" max="10" value="3" step="1"
@@ -650,6 +653,63 @@
       statusEl.innerText = 'Detenido';
       statusEl.className = 'text-xs text-gray-500';
       calcularResultados();
+    }
+
+    async function testVibrationBt() {
+      var logs = [];
+      logs.push('=== Diagnóstico de Vibración ===');
+      logs.push('HID conectado: ' + (hidDevice && hidDevice.opened ? 'SÍ' : 'NO'));
+      logs.push('Tipo conexión: ' + _connType);
+      if (hidDevice && hidDevice.opened) {
+        logs.push('Vendor: 0x' + hidDevice.vendorId.toString(16) + ' Product: 0x' + hidDevice.productId.toString(16));
+      }
+
+      try {
+        var gps = navigator.getGamepads();
+        var gpCount = 0;
+        for (var gi = 0; gi < gps.length; gi++) {
+          if (gps[gi]) gpCount++;
+        }
+        logs.push('Gamepads detectados: ' + gpCount);
+        for (var gi = 0; gi < gps.length; gi++) {
+          var gp = gps[gi];
+          if (gp) {
+            logs.push('  Gamepad #' + gi + ': ' + gp.id + ' | vibActuator: ' + (gp.vibrationActuator ? 'SÍ' : 'NO'));
+          }
+        }
+      } catch (e) {
+        logs.push('Gamepad API error: ' + e.message);
+      }
+
+      if (hidDevice && hidDevice.opened) {
+        var testBuf = rumbleBufDS4(200, 200);
+        var testIds = [0x05, 0x11];
+        for (var ti = 0; ti < testIds.length; ti++) {
+          try {
+            await hidDevice.sendReport(testIds[ti], new Uint8Array(testBuf));
+            logs.push('sendReport(0x' + testIds[ti].toString(16) + '): OK');
+          } catch (e) {
+            logs.push('sendReport(0x' + testIds[ti].toString(16) + '): ERROR ' + e.message);
+            try {
+              await hidDevice.sendOutputReport(testIds[ti], testBuf);
+              logs.push('sendOutputReport(0x' + testIds[ti].toString(16) + '): OK');
+            } catch (e2) {
+              logs.push('sendOutputReport(0x' + testIds[ti].toString(16) + '): ERROR ' + e2.message);
+            }
+          }
+        }
+        setTimeout(async function() {
+          var stopBuf = rumbleBufDS4(0, 0);
+          for (var ti = 0; ti < testIds.length; ti++) {
+            try { await hidDevice.sendReport(testIds[ti], new Uint8Array(stopBuf)); } catch (e) {}
+            try { await hidDevice.sendOutputReport(testIds[ti], stopBuf); } catch (e) {}
+          }
+        }, 300);
+      } else {
+        logs.push('No hay HID para probar output reports');
+      }
+
+      document.getElementById('usb-debug').innerHTML = logs.join('<br>');
     }
 
     /* ======================================================
