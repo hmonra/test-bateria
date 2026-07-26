@@ -525,14 +525,14 @@
     function rumbleBufDS4(strong, weak) {
       var buf = new ArrayBuffer(31);
       var v = new DataView(buf);
-      v.setUint8(0, 0x07);
+      v.setUint8(0, 0xFF);
       v.setUint8(1, 0x00);
       v.setUint8(2, 0x00);
       v.setUint8(3, weak);
       v.setUint8(4, strong);
       v.setUint8(5, 0x00);
       v.setUint8(6, 0x00);
-      v.setUint8(7, 0x00);
+      v.setUint8(7, 0xFF);
       return buf;
     }
 
@@ -583,14 +583,14 @@
       _vibInitSent = true;
       var buf = new ArrayBuffer(31);
       var v = new DataView(buf);
-      v.setUint8(0, 0x02);
+      v.setUint8(0, 0xFF);
       v.setUint8(1, 0x00);
       v.setUint8(2, 0x00);
       v.setUint8(3, 0x00);
       v.setUint8(4, 0x00);
       v.setUint8(5, 0x00);
       v.setUint8(6, 0x00);
-      v.setUint8(7, 0x00);
+      v.setUint8(7, 0xFF);
       v.setUint8(8, 0x00);
       var ids = _connType === 'bt' ? [0x11, 0x05] : [0x05, 0x11];
       for (var ri = 0; ri < ids.length; ri++) {
