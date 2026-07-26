@@ -35,7 +35,7 @@
   <header class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 p-4 border-b border-gray-800 bg-gray-900/60 shrink-0">
     <div>
       <h1 class="text-lg font-bold text-white flex items-center gap-2">
-        <i class="fas fa-battery-three-quarters text-emerald-400"></i> Test de Batería <span class="text-[10px] text-gray-600 font-mono font-normal ml-1" id="version-label">v1.4.0 — 2026-07-26 13:15 (#7)</span>
+        <i class="fas fa-battery-three-quarters text-emerald-400"></i> Test de Batería <span class="text-[10px] text-gray-600 font-mono font-normal ml-1" id="version-label">v1.4.0 — 2026-07-26 13:25 (#8)</span>
       </h1>
       <p class="text-xs text-gray-500 mt-0.5" id="header-info"></p>
     </div>
@@ -522,8 +522,20 @@
       return null;
     }
 
-    function rumbleBufDS4(strong, weak) {
-      var buf = new ArrayBuffer(31);
+    function crc32(data) {
+      var crc = 0xFFFFFFFF;
+      for (var i = 0; i < data.byteLength; i++) {
+        crc ^= data.getUint8(i);
+        for (var j = 0; j < 8; j++) {
+          if (crc & 1) crc = (crc >>> 1) ^ 0xEDB88320;
+          else crc >>>= 1;
+        }
+      }
+      return (crc ^ 0xFFFFFFFF) >>> 0;
+    }
+
+    function rumbleBufDS4(strong, weak, isBt) {
+      var buf = new ArrayBuffer(isBt ? 31 : 31);
       var v = new DataView(buf);
       v.setUint8(0, 0xFF);
       v.setUint8(1, 0x00);
@@ -533,6 +545,13 @@
       v.setUint8(5, 0x00);
       v.setUint8(6, 0x00);
       v.setUint8(7, 0xFF);
+      if (isBt) {
+        var c = crc32(new DataView(buf, 0, 27));
+        v.setUint8(27, (c >> 0) & 0xFF);
+        v.setUint8(28, (c >> 8) & 0xFF);
+        v.setUint8(29, (c >> 16) & 0xFF);
+        v.setUint8(30, (c >> 24) & 0xFF);
+      }
       return buf;
     }
 
@@ -554,8 +573,9 @@
 
     async function sendRumbleWebHID(strong, weak) {
       if (!hidDevice || !hidDevice.opened) return false;
-      var buf = rumbleBufDS4(strong, weak);
-      var ids = _connType === 'bt' ? [0x11, 0x05] : [0x05, 0x11];
+      var isBt = _connType === 'bt';
+      var buf = rumbleBufDS4(strong, weak, isBt);
+      var ids = isBt ? [0x11, 0x05] : [0x05, 0x11];
       for (var ri = 0; ri < ids.length; ri++) {
         try {
           await hidDevice.sendReport(ids[ri], new Uint8Array(buf));
@@ -581,6 +601,7 @@
     async function initRumbleWebHID() {
       if (!hidDevice || !hidDevice.opened || _vibInitSent) return;
       _vibInitSent = true;
+      var isBt = _connType === 'bt';
       var buf = new ArrayBuffer(31);
       var v = new DataView(buf);
       v.setUint8(0, 0xFF);
@@ -592,7 +613,14 @@
       v.setUint8(6, 0x00);
       v.setUint8(7, 0xFF);
       v.setUint8(8, 0x00);
-      var ids = _connType === 'bt' ? [0x11, 0x05] : [0x05, 0x11];
+      if (isBt) {
+        var c = crc32(new DataView(buf, 0, 27));
+        v.setUint8(27, (c >> 0) & 0xFF);
+        v.setUint8(28, (c >> 8) & 0xFF);
+        v.setUint8(29, (c >> 16) & 0xFF);
+        v.setUint8(30, (c >> 24) & 0xFF);
+      }
+      var ids = isBt ? [0x11, 0x05] : [0x05, 0x11];
       for (var ri = 0; ri < ids.length; ri++) {
         try {
           await hidDevice.sendReport(ids[ri], new Uint8Array(buf));
@@ -684,8 +712,9 @@
       }
 
       if (hidDevice && hidDevice.opened) {
-        var testBuf = rumbleBufDS4(200, 200);
-        var testIds = [0x05, 0x11];
+        var isBt = _connType === 'bt';
+        var testBuf = rumbleBufDS4(200, 200, isBt);
+        var testIds = isBt ? [0x11, 0x05] : [0x05, 0x11];
         for (var ti = 0; ti < testIds.length; ti++) {
           try {
             await hidDevice.sendReport(testIds[ti], new Uint8Array(testBuf));
@@ -701,7 +730,7 @@
           }
         }
         setTimeout(async function() {
-          var stopBuf = rumbleBufDS4(0, 0);
+          var stopBuf = rumbleBufDS4(0, 0, isBt);
           for (var ti = 0; ti < testIds.length; ti++) {
             try { await hidDevice.sendReport(testIds[ti], new Uint8Array(stopBuf)); } catch (e) {}
             try { await hidDevice.sendOutputReport(testIds[ti], stopBuf); } catch (e) {}
